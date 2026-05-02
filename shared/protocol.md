@@ -110,6 +110,25 @@ All messages are JSON with this structure. **Enum values use lowercase** (e.g., 
 | `sms.send` | request | Send SMS from desktop |
 | `pong` | response | Keep-alive response |
 
+### 3.1 Connection Authentication Order
+
+The server enforces authentication before accepting any data push messages.
+After the WebSocket connection is established, the client **must** authenticate
+via one of two methods before sending `push`-type messages (`sms.new`, `sms.sync`,
+`call.new`, `call.sync`, `fcm.token`, `ping`):
+
+1. **`pair.init`** — Send the pairing token. If valid, the connection is authenticated.
+   This is used on first pairing and on reconnects when the token is already stored.
+
+2. **`auth.challenge`** — Send a challenge with nonce + timestamp. The server
+   responds with the HMAC, proving possession of the SIK (Server Identity Key).
+   On success, the connection is authenticated.
+
+Sending a push message before authentication returns an error:
+```json
+{ "type": "error", "error": "Not authenticated. Send pair.init or auth.challenge first." }
+```
+
 ## 4. Data Models
 
 ### SMS Message
@@ -188,8 +207,11 @@ password-derived SIK:
 ### 5.4 Auto-Lock
 
 The desktop app auto-locks after 2 minutes of inactivity (configurable).
-When locked, the server refuses WebSocket connections with HTTP 423 and
-clears all decrypted keys from memory.
+When locked:
+- The server refuses new WebSocket connections with HTTP 423
+- **Existing WebSocket connections are forcibly closed** with close code `PolicyViolation`
+- All decrypted keys are cleared from memory
+- The database connection is closed
 
 ## 6. UDP Wake Protocol
 

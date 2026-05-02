@@ -292,6 +292,13 @@ possesses the correct SIK on every connection:
 This protects against an attacker who steals the TLS certificate from the
 hard drive — they still can't authenticate without the password-derived SIK.
 
+**Enforcement:** The WebSocket server tracks per-connection authentication state.
+All push-type messages (`sms.new`, `sms.sync`, `call.new`, `call.sync`,
+`fcm.token`, `ping`) are **rejected** from unauthenticated connections.
+Authentication is granted by a successful `pair.init` (with valid token) or
+`auth.challenge` (with correct HMAC). When auto-lock fires, existing
+WebSocket connections are forcibly closed.
+
 ### 6.4 Pairing Flow
 1. Desktop generates a pairing token (32 random hex bytes)
 2. Desktop shows token as QR code and text
