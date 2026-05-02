@@ -1,0 +1,120 @@
+# ============================================================
+# Phobri .gitignore — .NET / C# + Android / Kotlin + General
+# ============================================================
+
+# -------------------- General / OS --------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*~
+~$*
+
+# -------------------- .NET / C# (dotnet) --------------------
+# Build results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet
+*.nupkg
+**/packages/*
+
+# Visual Studio
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+*.vssscc
+*.vspscc
+*.pidb
+*.scc
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+*.DotSettings.user
+
+# VSCode (leave workspace if intentional)
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/extensions.json
+*.code-workspace
+
+# MonoDevelop / Xamarin
+*.userprefs
+
+# BenchmarkDotNet
+BenchmarkDotNet.Artifacts/
+
+# dotnet tools
+.dotnet/
+
+# Coverage / analysis
+*.coverage
+*.coveragexml
+coveragereport/
+TestResults/
+
+# macOS .NET
+*.DS_Store
+
+# -------------------- Android / Kotlin --------------------
+# Gradle
+.gradle/
+gradle/wrapper/gradle-wrapper.jar
+gradle/wrapper/gradle-wrapper.properties
+gradlew
+gradlew.bat
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE — Android Studio
+*.iml
+.idea/
+local.properties
+*.iws
+*.ipr
+
+# Android
+.apk
+.aab
+*.ap_
+*.aab
+*.dex
+*.class
+bin/
+gen/
+out/
+.externalNativeBuild/
+.cxx/
+
+# Keystore / signing
+*.jks
+*.keystore
+!debug.keystore
+
+# ProGuard
+proguard/
+
+# Logs
+*.log
+
+# Generated
+gen-external-apklibs/
+
+# -------------------- Project-specific --------------------
+# Phobri runtime data (cert, db, config)
+~/.phobri/
+
+# Development environment
+.env
+*.env.local
