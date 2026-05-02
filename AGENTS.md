@@ -104,13 +104,13 @@ Auth Challenge: `nonce` (64-char hex), `ts` (epoch millis), `hmac` (64-char hex)
 - SHA-256 fingerprint pinned by Android on pairing (TOFU)
 - Pairing token: 32 random bytes as hex (64 chars)
 - Auth: WebSocket uses first message (`pair.init`) for auth; REST uses `X-Phobri-Token` header
-- Self-signed cert hostname verification disabled for dev/Tailscale (TODO: proper TOFU pinning)
+- Self-signed cert hostname verification disabled for dev/Tailscale (authenticity verified via pinned fingerprint)
 - Auto-lock defaults to 2 minutes; set `AutoLockMinutes: 0` in config to disable
 
 ## Known TODOs & Future Work
 - [x] ~~Pairing loop bug — fixed with pending token mechanism~~
 - [x] ~~Android CIO engine → OkHttp for hostname verification control~~
-- [ ] Proper TOFU cert pinning for Ktor OkHttp (currently trust-all for dev)
+- [x] Proper TOFU cert pinning for Ktor OkHttp (trust-all for dev → pinned TrustManager)
 - [ ] Server cert SAN should include Tailscale hostname at generation time
 - [ ] Easy server setup in the client via QR code
 - [ ] FCM integration for reliable wake (optional)
@@ -215,7 +215,7 @@ cd android && ./gradlew test && cd ../desktop/Phobri.Desktop.Tests && dotnet tes
 - Password must be entered on desktop startup to unlock the vault
 - Headless mode accepts `--password <pw>`, `--password-file <path>`, or interactive prompt
 - Auto-lock defaults to 2 minutes; configurable in config.json (`AutoLockMinutes`)
-- Android stores SIK (Server Identity Key) in SharedPreferences; received during pairing
+- Android stores SIK (Server Identity Key) in EncryptedSharedPreferences (AES-256-GCM, Keystore-backed); received during pairing
 - On each connection, Android sends `auth.challenge` to verify server has correct SIK
 - Challenge-response: HMAC-SHA256(SIK, nonce|timestamp) with 5-minute timestamp window
 - Rate limiting: 5 failed auth attempts per minute per connection

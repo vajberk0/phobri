@@ -346,8 +346,7 @@ phobri/
 │           │       │   ├── CallObserver.kt
 │           │       │   └── PhobriWebSocketClient.kt
 │           │       ├── pairing/
-│           │       │   ├── PairingManager.kt
-│           │       │   └── CertificatePinner.kt
+│           │       │   └── PairingManager.kt
 │           │       ├── model/
 │           │       │   ├── SmsMessage.kt
 │           │       │   ├── CallLogEntry.kt
@@ -450,7 +449,7 @@ phobri/
 
 ### Phase 4: Pairing & Security
 16. Implement `PairingService` (desktop)
-17. Implement `PairingManager` + `CertificatePinner` (Android)
+17. Implement `PairingManager` (Android) — includes cert pinning via `createPinnedTrustManager()`
 18. Implement pairing UI on both sides
 19. Write pairing tests
 
