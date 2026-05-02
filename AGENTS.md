@@ -55,7 +55,6 @@ Phobri is a two-app system for syncing SMS and call logs from Android to Desktop
 - UDP wake listener on port 9876
 - `ContentObserver` for real-time SMS detection
 - `PhoneStateListener` for call state changes
-- **Cannot compile on this machine** — no Android SDK. Write correct code.
 - **Package:** `com.phobri.android`
 - **Namespaces:** `com.phobri.android.model`, `.sync`, `.service`, `.pairing`, `.network`, `.ui`
 
@@ -105,6 +104,31 @@ Call: `id`, `number`, `contactName`, `date`, `duration`, `type`
 - [ ] Export conversations
 - [ ] Multiple device pairing
 
+## Android Build Setup (This Machine)
+
+The Android SDK is installed at `~/android-sdk` (not system-wide).
+Environment variables required:
+```bash
+export ANDROID_HOME=$HOME/android-sdk
+```
+The `local.properties` in `android/` already points to this path.
+
+Components installed:
+- Platform: android-35
+- Build-tools: 34.0.0
+- Platform-tools: 37.0.0
+
+Gradle wrapper (8.11.1) is committed; no system Gradle needed.
+
+## Git Workflow
+
+**After finishing a set of changes, always commit and push:**
+```bash
+git add -A
+git commit -m "<descriptive message>"
+git push
+```
+
 ## Test Commands
 ```bash
 # Desktop build and test
@@ -114,8 +138,8 @@ cd desktop/Phobri.Desktop.Tests && dotnet test
 # Android test (needs Android SDK)
 cd android && ./gradlew test
 
-# Full check
-cd desktop/Phobri.Desktop.Tests && dotnet test && echo "Desktop: OK"
+# Full check (android + desktop)
+cd android && ./gradlew test && cd ../desktop/Phobri.Desktop.Tests && dotnet test && echo "All: OK"
 ```
 
 ## File Organization Notes

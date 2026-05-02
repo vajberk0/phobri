@@ -29,8 +29,8 @@ class SmsObserver(
         if (isRegistered) return
         context.contentResolver.registerContentObserver(
             SMS_CONTENT_URI,
-            notifyForDescendants = true,
-            observer = this
+            true,
+            this
         )
         isRegistered = true
     }

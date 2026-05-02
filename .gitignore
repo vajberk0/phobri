@@ -70,12 +70,10 @@ TestResults/
 # -------------------- Android / Kotlin --------------------
 # Gradle
 .gradle/
-gradle/wrapper/gradle-wrapper.jar
-gradle/wrapper/gradle-wrapper.properties
-gradlew
-gradlew.bat
-build/
-!gradle/wrapper/gradle-wrapper.jar
+android/build/
+android/app/build/
+# Gradle wrapper files (gradlew, gradlew.bat, gradle-wrapper.jar, gradle-wrapper.properties)
+# are committed — required to bootstrap the build without a system Gradle installation.
 
 # IDE — Android Studio
 *.iml

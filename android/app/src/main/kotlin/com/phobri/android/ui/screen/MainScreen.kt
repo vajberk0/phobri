@@ -24,6 +24,7 @@ import com.phobri.android.network.IpDetector
  * Main screen for the Android app.
  * Shows pairing, connection status, and server controls.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
     onStartSync: (host: String, port: Int) -> Unit,
