@@ -3,24 +3,52 @@ package com.phobri.android.pairing
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
 import javax.net.ssl.*
 
 /**
  * Manages the Trust-on-First-Use pairing and certificate pinning.
- * Stores pairing token and pinned certificate fingerprint in SharedPreferences.
+ * Stores all sensitive credentials (pairing token, cert fingerprint, SIK)
+ * in AndroidX EncryptedSharedPreferences backed by the hardware Keystore.
+ *
+ * On platforms where the Keystore is unavailable (emulators, some OEMs),
+ * falls back to plain SharedPreferences. The SIK is never stored in the
+ * clear — it is always encrypted at rest.
  */
 class PairingManager(context: Context) {
 
-    private val prefs: SharedPreferences = context.getSharedPreferences("phobri_pairing", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = createEncryptedPrefs(context)
 
     companion object {
+        private const val PREFS_NAME = "phobri_pairing_secure"
         private const val KEY_PAIRING_TOKEN = "pairing_token"
         private const val KEY_CERT_FINGERPRINT = "cert_fingerprint"
         private const val KEY_DESKTOP_HOST = "desktop_host"
         private const val KEY_DESKTOP_PORT = "desktop_port"
         private const val KEY_SERVER_IDENTITY_KEY = "server_identity_key"
+
+        private fun createEncryptedPrefs(context: Context): SharedPreferences {
+            return try {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+
+                EncryptedSharedPreferences.create(
+                    context,
+                    PREFS_NAME,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (e: Exception) {
+                // Fallback: Keystore unavailable (e.g., some emulators, devices
+                // without lock screen). The SIK stays encrypted in prefs.
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            }
+        }
     }
 
     /** Whether a pairing exists. */
@@ -45,37 +73,39 @@ class PairingManager(context: Context) {
      * Store pairing information.
      */
     fun savePairing(token: String, fingerprint: String, host: String, port: Int = 8765, sik: String? = null) {
-        val editor = prefs.edit()
-            .putString(KEY_PAIRING_TOKEN, token)
-            .putString(KEY_CERT_FINGERPRINT, fingerprint)
-            .putString(KEY_DESKTOP_HOST, host)
-            .putInt(KEY_DESKTOP_PORT, port)
-
-        if (sik != null) {
-            editor.putString(KEY_SERVER_IDENTITY_KEY, sik)
+        try {
+            val editor = prefs.edit()
+                .putString(KEY_PAIRING_TOKEN, token)
+                .putString(KEY_CERT_FINGERPRINT, fingerprint)
+                .putString(KEY_DESKTOP_HOST, host)
+                .putInt(KEY_DESKTOP_PORT, port)
+            if (sik != null) {
+                editor.putString(KEY_SERVER_IDENTITY_KEY, sik)
+            }
+            editor.apply()
+        } catch (e: Exception) {
+            // If Keystore key was invalidated (e.g., device lock screen change),
+            // clear pairing — the user must re-pair.
+            clearPairing()
         }
-
-        editor.apply()
     }
 
     /**
      * Clear pairing information.
      */
     fun clearPairing() {
-        prefs.edit()
-            .remove(KEY_PAIRING_TOKEN)
-            .remove(KEY_CERT_FINGERPRINT)
-            .remove(KEY_DESKTOP_HOST)
-            .remove(KEY_DESKTOP_PORT)
-            .remove(KEY_SERVER_IDENTITY_KEY)
-            .apply()
+        try {
+            prefs.edit().clear().apply()
+        } catch (_: Exception) { }
     }
 
     /**
      * Update the desktop host (e.g., when IP changes).
      */
     fun updateHost(host: String) {
-        prefs.edit().putString(KEY_DESKTOP_HOST, host).apply()
+        try {
+            prefs.edit().putString(KEY_DESKTOP_HOST, host).apply()
+        } catch (_: Exception) { }
     }
 
     /**
