@@ -441,6 +441,178 @@ public sealed class FullProtocolTests : IAsyncLifetime
     }
 
     // ==================================================================
+    // Auth Challenge-Response Tests
+    // ==================================================================
+
+    [Fact]
+    public async Task WebSocket_AuthChallenge_Success()
+    {
+        using var ws = await ConnectAsync();
+
+        // The SIK was generated during password setup
+        var sik = _passwordManager.ServerIdentityKey!;
+        Assert.NotNull(sik);
+
+        var nonce = RandomNumberGenerator.GetBytes(32);
+        var nonceHex = Convert.ToHexStringLower(nonce);
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        // Send auth.challenge request
+        var challengePayload = JsonSerializer.SerializeToElement(
+            new AuthChallengePayload { Nonce = nonceHex, Timestamp = ts },
+            JsonContext.DefaultOptions);
+        var challenge = new ProtocolMessage
+        {
+            Type = MessageType.Request,
+            Action = "auth.challenge",
+            Id = $"chal-{nonceHex[..8]}",
+            Payload = challengePayload
+        };
+        await SendJsonAsync(ws, challenge);
+
+        // Receive response
+        var response = await ReceiveJsonAsync(ws);
+        Assert.NotNull(response);
+        Assert.Equal(MessageType.Response, response.Type);
+        Assert.Equal("auth.challenge", response.Action);
+        Assert.NotNull(response.Payload);
+
+        // Verify the HMAC matches our own computation
+        var serverHmac = response.Payload!.Value.GetProperty("hmac").GetString();
+        Assert.NotNull(serverHmac);
+        Assert.Equal(64, serverHmac!.Length);
+
+        var expectedMessage = $"{nonceHex}|{ts}";
+        var expectedHmac = CryptoService.ComputeHmacSha256Hex(sik, expectedMessage);
+        Assert.Equal(expectedHmac, serverHmac);
+    }
+
+    [Fact]
+    public async Task WebSocket_AuthChallenge_ExpiredTimestamp()
+    {
+        using var ws = await ConnectAsync();
+
+        var nonceHex = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+        // Timestamp from 10 minutes ago (outside the 5-minute window)
+        var expiredTs = DateTimeOffset.UtcNow.AddMinutes(-10).ToUnixTimeMilliseconds();
+
+        var challengePayload = JsonSerializer.SerializeToElement(
+            new AuthChallengePayload { Nonce = nonceHex, Timestamp = expiredTs },
+            JsonContext.DefaultOptions);
+        var challenge = new ProtocolMessage
+        {
+            Type = MessageType.Request,
+            Action = "auth.challenge",
+            Id = $"chal-{nonceHex[..8]}",
+            Payload = challengePayload
+        };
+        await SendJsonAsync(ws, challenge);
+
+        var response = await ReceiveJsonAsync(ws);
+        Assert.NotNull(response);
+        Assert.Equal(MessageType.Error, response!.Type);
+        Assert.Contains("expired", response.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WebSocket_AuthChallenge_MissingNonce()
+    {
+        using var ws = await ConnectAsync();
+
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        // Send challenge without a nonce field
+        var challengePayload = JsonSerializer.SerializeToElement(
+            new { ts },
+            JsonContext.DefaultOptions);
+        var challenge = new ProtocolMessage
+        {
+            Type = MessageType.Request,
+            Action = "auth.challenge",
+            Id = "chal-missing",
+            Payload = challengePayload
+        };
+        await SendJsonAsync(ws, challenge);
+
+        var response = await ReceiveJsonAsync(ws);
+        Assert.NotNull(response);
+        Assert.Equal(MessageType.Error, response!.Type);
+        Assert.Contains("nonce", response.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WebSocket_AuthChallenge_RateLimit()
+    {
+        using var ws = await ConnectAsync();
+
+        // Send 6 challenges with missing nonce — 5th should still error, 6th should rate-limit
+        for (int i = 0; i < 5; i++)
+        {
+            var payload = JsonSerializer.SerializeToElement(
+                new { ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
+                JsonContext.DefaultOptions);
+            var msg = new ProtocolMessage
+            {
+                Type = MessageType.Request,
+                Action = "auth.challenge",
+                Id = $"chal-{i}",
+                Payload = payload
+            };
+            await SendJsonAsync(ws, msg);
+            var resp = await ReceiveJsonAsync(ws);
+            Assert.NotNull(resp);
+            Assert.Equal(MessageType.Error, resp!.Type);
+        }
+
+        // 6th attempt should be rate-limited
+        {
+            var payload = JsonSerializer.SerializeToElement(
+                new { ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
+                JsonContext.DefaultOptions);
+            var msg = new ProtocolMessage
+            {
+                Type = MessageType.Request,
+                Action = "auth.challenge",
+                Id = "chal-5",
+                Payload = payload
+            };
+            await SendJsonAsync(ws, msg);
+            var resp = await ReceiveJsonAsync(ws);
+            Assert.NotNull(resp);
+            Assert.Equal(MessageType.Error, resp!.Type);
+            Assert.Contains("Too many", resp.Error);
+        }
+    }
+
+    [Fact]
+    public async Task WebSocket_AuthChallenge_WhenLocked()
+    {
+        using var ws = await ConnectAsync();
+
+        // Lock the vault
+        _passwordManager.Lock();
+
+        var nonceHex = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var challengePayload = JsonSerializer.SerializeToElement(
+            new AuthChallengePayload { Nonce = nonceHex, Timestamp = ts },
+            JsonContext.DefaultOptions);
+        var challenge = new ProtocolMessage
+        {
+            Type = MessageType.Request,
+            Action = "auth.challenge",
+            Id = $"chal-{nonceHex[..8]}",
+            Payload = challengePayload
+        };
+        await SendJsonAsync(ws, challenge);
+
+        var response = await ReceiveJsonAsync(ws);
+        Assert.NotNull(response);
+        Assert.Equal(MessageType.Error, response!.Type);
+        Assert.Contains("locked", response.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ==================================================================
     // Helpers
     // ==================================================================
 
