@@ -27,7 +27,18 @@ import com.phobri.android.BuildConfig
 import com.phobri.android.pairing.PairingManager
 import com.phobri.android.service.SyncForegroundService
 import com.phobri.android.sync.ClientEvent
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.URL
+import java.security.cert.X509Certificate
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+import androidx.compose.runtime.rememberCoroutineScope
 
 /**
  * Main screen for the Android app.
@@ -45,8 +56,11 @@ fun MainScreen(
 
     var isPaired by remember { mutableStateOf(pairingManager.isPaired) }
     var pairingCode by remember { mutableStateOf("") }
+    var pairingError by remember { mutableStateOf<String?>(null) }
+    var isPairing by remember { mutableStateOf(false) }
     var manualHost by remember { mutableStateOf(pairingManager.desktopHost ?: "") }
     var manualPort by remember { mutableStateOf(pairingManager.desktopPort.toString()) }
+    val coroutineScope = rememberCoroutineScope()
 
     // Reactive permission check
     var permissionCheckTick by remember { mutableStateOf(0) }
@@ -247,21 +261,87 @@ fun MainScreen(
                             visualTransformation = PasswordVisualTransformation()
                         )
                         Spacer(modifier = Modifier.height(6.dp))
+                        // Fetch fingerprint from server before saving pairing
+                        val trustAllSslContext by remember {
+                            mutableStateOf(
+                                try {
+                                    SSLContext.getInstance("TLS").apply {
+                                        init(null, arrayOf<TrustManager>(object : X509TrustManager {
+                                            override fun checkClientTrusted(c: Array<out X509Certificate>?, a: String?) {}
+                                            override fun checkServerTrusted(c: Array<out X509Certificate>?, a: String?) {}
+                                            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                                        }), java.security.SecureRandom())
+                                    }
+                                } catch (e: Exception) { null }
+                            )
+                        }
+
+                        pairingError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall)
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+
                         Button(
                             onClick = {
-                                if (pairingCode.isNotBlank()) {
-                                    pairingManager.savePairing(
-                                        token = pairingCode,
-                                        fingerprint = "",
-                                        host = manualHost.ifBlank { "192.168.1.1" },
-                                        port = manualPort.toIntOrNull() ?: 8765
-                                    )
-                                    isPaired = true
+                                if (pairingCode.isNotBlank() && !isPairing) {
+                                    val host = manualHost.ifBlank { "192.168.1.1" }
+                                    val port = manualPort.toIntOrNull() ?: 8765
+                                    val token = pairingCode
+                                    isPairing = true
+                                    pairingError = null
+
+                                    coroutineScope.launch {
+                                        val fingerprint = withContext(Dispatchers.IO) {
+                                            try {
+                                                val url = URL("https://$host:$port/api/v1/ping")
+                                                val conn = url.openConnection() as HttpsURLConnection
+                                                conn.sslSocketFactory = trustAllSslContext?.socketFactory
+                                                conn.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                                                conn.connectTimeout = 5000
+                                                conn.readTimeout = 5000
+                                                conn.requestMethod = "GET"
+
+                                                if (conn.responseCode == 200) {
+                                                    val body = conn.inputStream.bufferedReader().readText()
+                                                    conn.disconnect()
+                                                    JSONObject(body).optString("fingerprint", "")
+                                                } else {
+                                                    conn.disconnect()
+                                                    ""
+                                                }
+                                            } catch (e: Exception) {
+                                                ""
+                                            }
+                                        }
+
+                                        if (fingerprint.isNotBlank() && fingerprint.length == 64) {
+                                            pairingManager.savePairing(
+                                                token = token,
+                                                fingerprint = fingerprint,
+                                                host = host,
+                                                port = port
+                                            )
+                                            isPaired = true
+                                            pairingError = null
+                                        } else {
+                                            pairingError = "Could not reach server at $host:$port"
+                                        }
+                                        isPairing = false
+                                    }
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !isPairing
                         ) {
-                            Text("Pair Device")
+                            if (isPairing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text(if (isPairing) "Connecting..." else "Pair Device")
                         }
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {

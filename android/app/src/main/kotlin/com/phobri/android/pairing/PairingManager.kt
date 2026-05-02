@@ -93,8 +93,26 @@ class PairingManager(context: Context) {
      */
     fun createPinnedSslSocketFactory(): SSLSocketFactory? {
         val pinnedFingerprint = certFingerprint ?: return null
+        val tm = createPinnedTrustManager() ?: return null
+        return try {
+            val sslContext = SSLContext.getInstance("TLSv1.3")
+            sslContext.init(null, arrayOf(tm), java.security.SecureRandom())
+            sslContext.socketFactory
+        } catch (e: Exception) {
+            null
+        }
+    }
 
-        val trustManager = object : X509TrustManager {
+    /**
+     * Create an X509TrustManager that validates the server certificate
+     * against the pinned SHA-256 fingerprint. Returns null if no valid
+     * fingerprint is stored (i.e., first-time pairing in progress).
+     */
+    fun createPinnedTrustManager(): X509TrustManager? {
+        val pinnedFingerprint = certFingerprint
+        if (pinnedFingerprint.isNullOrBlank() || pinnedFingerprint.length < 64) return null
+
+        return object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
             override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
                 chain?.firstOrNull()?.let { cert ->
@@ -109,14 +127,6 @@ class PairingManager(context: Context) {
                 } ?: throw SSLException("No server certificate provided")
             }
             override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-        }
-
-        return try {
-            val sslContext = SSLContext.getInstance("TLSv1.3")
-            sslContext.init(null, arrayOf(trustManager), java.security.SecureRandom())
-            sslContext.socketFactory
-        } catch (e: Exception) {
-            null
         }
     }
 }

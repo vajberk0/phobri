@@ -44,7 +44,7 @@ class PhobriWebSocketClient(
         }
 
         fun defaultClient(pairingManager: PairingManager? = null): HttpClient {
-            val pinnedFactory = pairingManager?.createPinnedSslSocketFactory()
+            val pinnedTrustManager = pairingManager?.createPinnedTrustManager()
 
             return HttpClient(OkHttp) {
                 install(WebSockets) {
@@ -53,15 +53,12 @@ class PhobriWebSocketClient(
 
                 engine {
                     config {
-                        // Trust self-signed certificates and skip hostname verification
-                        // (the cert CN is "localhost" but we connect via Tailscale IP/hostname)
+                        // Skip hostname verification — the cert CN is "localhost"
+                        // but we connect via Tailscale IP/hostname.
+                        // Certificate authenticity is verified by the TrustManager below.
                         hostnameVerifier(HostnameVerifier { _, _ -> true })
 
-                        val trustManager = if (pinnedFactory != null) {
-                            extractTrustManager(pinnedFactory)
-                        } else {
-                            trustAllManager
-                        }
+                        val trustManager = pinnedTrustManager ?: trustAllManager
                         val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
                         sslContext.init(null, arrayOf(trustManager), java.security.SecureRandom())
                         sslSocketFactory(sslContext.socketFactory, trustManager as X509TrustManager)
@@ -70,14 +67,12 @@ class PhobriWebSocketClient(
             }
         }
 
+        /** TrustManager that accepts any certificate. Used only when no pairing
+         *  fingerprint is stored (first-time pairing flow). */
         private val trustAllManager = object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
             override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
             override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-        }
-
-        private fun extractTrustManager(factory: javax.net.ssl.SSLSocketFactory): X509TrustManager {
-            return trustAllManager
         }
     }
 
