@@ -151,7 +151,7 @@ to the client on each connection.
 
 ### 5.1 Envelope Encryption
 
-- A random **Data Encryption Key (DEK)** encrypts the SQLite database
+- A random **Data Encryption Key (DEK)** encrypts the SQLite database at the page level (never decrypted to disk)
 - A random **Server Identity Key (SIK)** signs connection challenges
 - Both keys are encrypted with a **Key Encryption Key (KEK)** derived from the
   user's password via PBKDF2-HMAC-SHA256 (600,000 iterations)

@@ -195,7 +195,7 @@ public sealed class DataServiceTests : IDisposable
         await _service.UpsertSmsAsync(msg);
 
         // Lock
-        await _service.LockAsync(_testDek);
+        await _service.LockAsync();
         Assert.False(_service.IsOpen);
 
         // Unlock again

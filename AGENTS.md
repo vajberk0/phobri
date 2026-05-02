@@ -197,7 +197,7 @@ cd android && ./gradlew test && cd ../desktop/Phobri.Desktop.Tests && dotnet tes
 - `Services/PasswordManagerService.cs` — Password setup, unlock, auto-lock, envelope encryption
 - `Services/SyncServer.cs` — Kestrel embedded server with REST + WS endpoints
 - `Services/WebSocketHandler.cs` — WS connection handling, message routing, challenge-response
-- `Services/DataService.cs` — SQLite CRUD with encrypted storage
+- `Services/DataService.cs` — SQLite CRUD with page-level encrypted storage (SQLite3MC)
 - `Services/PairingService.cs` — TOFU pairing logic with encrypted token storage
 - `Services/UdpWakeService.cs` — UDP wake sender
 - `Services/ExternalIpService.cs` — ip.ie.mk external IP fetcher
@@ -211,7 +211,7 @@ cd android && ./gradlew test && cd ../desktop/Phobri.Desktop.Tests && dotnet tes
 - `App.axaml.cs` — DI container setup
 
 ### Password / Security Notes
-- Desktop DB is always encrypted at rest; decrypted to `/tmp/phobri/` only while unlocked
+- Desktop DB is always encrypted at rest at the page level (SQLite3 Multiple Ciphers); never decrypted to disk
 - Password must be entered on desktop startup to unlock the vault
 - Headless mode accepts `--password <pw>`, `--password-file <path>`, or interactive prompt
 - Auto-lock defaults to 2 minutes; configurable in config.json (`AutoLockMinutes`)

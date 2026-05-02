@@ -228,7 +228,7 @@ All messages are JSON with a type discriminator:
 | `UdpWakeService` | Sends UDP wake packets to phone |
 | `ExternalIpService` | Fetches external IP from `ip.ie.mk` |
 | `PairingService` | Manages TOFU pairing, generates self-signed certs |
-| `DataService` | SQLite CRUD for local SMS/call log cache |
+| `DataService` | SQLite CRUD for local SMS/call log cache (page-level AES encrypted) |
 | `WebSocketHandler` | Handles WebSocket connections from phone |
 | `FcmPushService` | Sends FCM pushes via Firebase Admin SDK (optional) |
 | `MainViewModel` | Main window VM: connection status, sync controls |
@@ -270,7 +270,7 @@ All sensitive data on the desktop is protected by a user-chosen password:
   - Both keys encrypted with a **Key Encryption Key (KEK)** derived from the password
 - **Cipher:** AES-256-GCM for all symmetric encryption
 - **Auto-Lock:** After 2 minutes of inactivity, the app locks and clears all keys from memory
-- **Data at Rest:** Database file on disk is always encrypted (decrypted to `/tmp` only while unlocked)
+- **Data at Rest:** Database file is always encrypted on disk at the page level (SQLite3 Multiple Ciphers, ChaCha20-Poly1305). No plaintext ever touches the filesystem.
 - **Config:** Pairing token and keys stored encrypted in `config.json`
 
 ### 6.2 TLS Certificate
@@ -305,8 +305,8 @@ hard drive — they still can't authenticate without the password-derived SIK.
 
 | Threat | Protection |
 |--------|-----------|
-| Physical access to powered-off desktop hard drive | All data encrypted with password-derived KEK; DB, config, and TLS cert encrypted at rest |
-| Physical access to unlocked desktop (user is away) | Auto-lock after 2 minutes clears all keys from memory |
+| Physical access to powered-off desktop hard drive | All data encrypted with password-derived KEK; DB encrypted at page level (never decrypted to disk), config and TLS cert encrypted at rest |
+| Physical access to unlocked desktop (user is away) | Auto-lock after 2 minutes clears all keys from memory, database connection closed |
 | Desktop hard drive stolen + attacker tries to impersonate server | TLS cert alone insufficient; SIK challenge-response blocks authentication |
 | Network MITM | TLS 1.3 with certificate pinning (TOFU) |
 | Password brute force | PBKDF2 with 600K iterations; rate-limited auth attempts (5/min) |
@@ -520,6 +520,7 @@ phobri/
 | Avalonia | 12.x | UI framework |
 | Avalonia.Themes.Fluent | 12.x | Fluent theme |
 | CommunityToolkit.Mvvm | 8.4.x | MVVM toolkit |
-| Microsoft.Data.Sqlite | 9.x | SQLite |
+| Microsoft.Data.Sqlite.Core | 10.x | SQLite |
+| SQLite3MC.PCLRaw.bundle | 2.x | Page-level AES SQLite encryption |
 | Microsoft.AspNetCore.Server.Kestrel | 9.x | Embedded HTTP/WS server |
 | xUnit | 3.x | Testing |

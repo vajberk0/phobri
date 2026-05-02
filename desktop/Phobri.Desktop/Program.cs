@@ -168,7 +168,7 @@ sealed class Program
                 var dek = passwordManager.DataEncryptionKey;
                 if (dek is not null)
                 {
-                    dataService.LockAsync(dek).GetAwaiter().GetResult();
+                    dataService.LockAsync().GetAwaiter().GetResult();
                 }
                 passwordManager.Lock();
             }

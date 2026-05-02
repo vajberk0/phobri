@@ -1,5 +1,4 @@
 using Microsoft.Data.Sqlite;
-using Phobri.Desktop.Infrastructure;
 using Phobri.Desktop.Models;
 
 namespace Phobri.Desktop.Services;
@@ -7,26 +6,30 @@ namespace Phobri.Desktop.Services;
 /// <summary>
 /// Provides local SQLite storage for SMS messages and call logs.
 /// Enables offline access and search.
-/// Supports encrypted storage with password-based DEK.
+/// Uses SQLite3 Multiple Ciphers for page-level AES encryption.
+/// The database file is ALWAYS encrypted on disk — no plaintext ever
+/// touches the filesystem. No temp files, no decrypt-to-disk.
 /// </summary>
 public interface IDataService
 {
     /// <summary>Whether the database is currently open and unlocked.</summary>
     bool IsOpen { get; }
 
-    /// <summary>Initialize database (no-op if already unlocked).</summary>
+    /// <summary>No-op (kept for API compatibility).</summary>
     Task InitializeAsync();
 
     /// <summary>
-    /// Unlock the database with the given DEK.
-    /// Decrypts the database file to a temp location and opens it.
+    /// Open the encrypted database with the given DEK.
+    /// The DEK is used directly as the SQLite encryption key.
+    /// Creates the database and schema if first run.
     /// </summary>
     Task UnlockAsync(byte[] dek);
 
     /// <summary>
-    /// Lock the database: close connections, re-encrypt, and clean up temp files.
+    /// Lock the database: close the connection.
+    /// The file remains encrypted on disk (always was).
     /// </summary>
-    Task LockAsync(byte[] dek);
+    Task LockAsync();
 
     // SMS operations
     Task UpsertSmsAsync(SmsMessage message);
@@ -46,9 +49,9 @@ public interface IDataService
 
 public sealed class DataService : IDataService, IDisposable
 {
-    private readonly string _encryptedDbPath;
-    private readonly string _tempDbPath;
+    private readonly string _dbPath;
     private SqliteConnection? _connection;
+    private byte[]? _dek;
     private bool _isOpen;
 
     public DataService(string dbPath)
@@ -57,18 +60,7 @@ public sealed class DataService : IDataService, IDisposable
         if (dir is not null)
             Directory.CreateDirectory(dir);
 
-        _encryptedDbPath = dbPath;
-
-        // Decrypted temp file goes to /tmp with a unique name per instance
-        var tempDir = Path.Combine(Path.GetTempPath(), "phobri");
-        Directory.CreateDirectory(tempDir);
-        try
-        {
-            File.SetUnixFileMode(tempDir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-        catch { /* not on Unix */ }
-
-        _tempDbPath = Path.Combine(tempDir, $"data_{Guid.NewGuid():N}.db");
+        _dbPath = dbPath;
     }
 
     /// <inheritdoc/>
@@ -77,7 +69,6 @@ public sealed class DataService : IDataService, IDisposable
     /// <inheritdoc/>
     public Task InitializeAsync()
     {
-        // Nothing to do - UnlockAsync handles everything
         return Task.CompletedTask;
     }
 
@@ -87,28 +78,29 @@ public sealed class DataService : IDataService, IDisposable
         if (_isOpen)
             return;
 
-        if (!File.Exists(_encryptedDbPath))
-        {
-            // First time: create the database directly in the temp location
-            await CreateEmptyDatabaseAsync();
-        }
-        else
-        {
-            // Decrypt existing database to temp location
-            try
-            {
-                await CryptoService.DecryptFileAsync(_encryptedDbPath, _tempDbPath, dek);
-            }
-            catch (Exception ex) when (ex is not FileNotFoundException)
-            {
-                throw new System.Security.Cryptography.CryptographicException(
-                    "Failed to decrypt database. The DEK may be incorrect.", ex);
-            }
-        }
+        _dek = dek;
 
-        // Open SQLite on the decrypted temp file (disable pooling for temp files)
-        _connection = new SqliteConnection($"Data Source={_tempDbPath};Pooling=False");
+        // Build connection string with encryption key.
+        // DEK (32 random bytes) is hex-encoded and used as the SQLite key.
+        // SQLite3MC applies PBKDF2 internally; the DEK's 256 bits of
+        // entropy ensure strong encryption regardless.
+        var dekHex = Convert.ToHexStringLower(dek);
+        var csb = new SqliteConnectionStringBuilder
+        {
+            DataSource = _dbPath,
+            Password = dekHex,
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = false
+        };
+
+        _connection = new SqliteConnection(csb.ToString());
         await _connection.OpenAsync();
+
+        // PRAGMA settings: use DELETE journal mode (no WAL files
+        // to worry about; the journal is also encrypted by SQLite3MC).
+        using var pragmaCmd = _connection.CreateCommand();
+        pragmaCmd.CommandText = "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;";
+        await pragmaCmd.ExecuteNonQueryAsync();
 
         // Ensure schema is up to date
         await EnsureSchemaAsync();
@@ -117,25 +109,16 @@ public sealed class DataService : IDataService, IDisposable
     }
 
     /// <inheritdoc/>
-    public async Task LockAsync(byte[] dek)
+    public async Task LockAsync()
     {
         if (!_isOpen || _connection is null)
             return;
 
         _isOpen = false;
 
-        // Force WAL checkpoint to ensure all data is in the main file
-        try
-        {
-            using var pragmaCmd = _connection.CreateCommand();
-            pragmaCmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-            await pragmaCmd.ExecuteNonQueryAsync();
-        }
-        catch { /* WAL may not be active */ }
-
-        // Close the SQLite connection
         var conn = _connection;
         _connection = null;
+        _dek = null;
 
         try
         {
@@ -143,16 +126,6 @@ public sealed class DataService : IDataService, IDisposable
         }
         catch { }
         conn.Dispose();
-
-        // Re-encrypt the database from temp to permanent location
-        if (File.Exists(_tempDbPath))
-        {
-            // Small delay for filesystem to settle
-            await Task.Delay(100);
-
-            await CryptoService.EncryptFileAsync(_tempDbPath, _encryptedDbPath, dek);
-            SecureDelete(_tempDbPath);
-        }
     }
 
     // --- SMS Operations ---
@@ -341,11 +314,6 @@ public sealed class DataService : IDataService, IDisposable
         if (_connection is null) return;
 
         using var cmd = _connection.CreateCommand();
-
-        // Use DELETE journal mode for simpler file management (no WAL/SHM files)
-        cmd.CommandText = "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;";
-        await cmd.ExecuteNonQueryAsync();
-
         cmd.CommandText = @"
             CREATE TABLE IF NOT EXISTS sms_messages (
                 id INTEGER PRIMARY KEY,
@@ -377,46 +345,6 @@ public sealed class DataService : IDataService, IDisposable
             CREATE INDEX IF NOT EXISTS idx_call_number ON call_log(number);
 
             CREATE TABLE IF NOT EXISTS sync_state (
-                data_type TEXT PRIMARY KEY,
-                last_sync_timestamp INTEGER NOT NULL DEFAULT 0
-            );
-        ";
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    private async Task CreateEmptyDatabaseAsync()
-    {
-        // Create an empty database in the temp location
-        await using var tempConn = new SqliteConnection($"Data Source={_tempDbPath};Pooling=False");
-        await tempConn.OpenAsync();
-        using var cmd = tempConn.CreateCommand();
-
-        // Use DELETE journal mode for simpler file management
-        cmd.CommandText = "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;";
-        await cmd.ExecuteNonQueryAsync();
-
-        cmd.CommandText = @"
-            CREATE TABLE sms_messages (
-                id INTEGER PRIMARY KEY,
-                thread_id INTEGER NOT NULL DEFAULT 0,
-                address TEXT NOT NULL,
-                contact_name TEXT,
-                body TEXT NOT NULL DEFAULT '',
-                date INTEGER NOT NULL,
-                type TEXT NOT NULL DEFAULT 'inbox',
-                read INTEGER NOT NULL DEFAULT 1,
-                synced_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
-            );
-            CREATE TABLE call_log (
-                id INTEGER PRIMARY KEY,
-                number TEXT NOT NULL,
-                contact_name TEXT,
-                date INTEGER NOT NULL,
-                duration INTEGER NOT NULL DEFAULT 0,
-                type TEXT NOT NULL DEFAULT 'incoming',
-                synced_at INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000)
-            );
-            CREATE TABLE sync_state (
                 data_type TEXT PRIMARY KEY,
                 last_sync_timestamp INTEGER NOT NULL DEFAULT 0
             );
@@ -488,32 +416,10 @@ public sealed class DataService : IDataService, IDisposable
         return calls;
     }
 
-    private static void SecureDelete(string path)
-    {
-        try
-        {
-            var fileInfo = new FileInfo(path);
-            if (fileInfo.Exists && fileInfo.Length > 0)
-            {
-                using var fs = new FileStream(path, FileMode.Open, FileAccess.Write);
-                var zeros = new byte[4096];
-                long remaining = fileInfo.Length;
-                while (remaining > 0)
-                {
-                    int toWrite = (int)Math.Min(zeros.Length, remaining);
-                    fs.Write(zeros, 0, toWrite);
-                    remaining -= toWrite;
-                }
-                fs.Flush();
-            }
-        }
-        catch { /* best effort */ }
-        try { File.Delete(path); } catch { }
-    }
-
     public void Dispose()
     {
         _connection?.Dispose();
         _connection = null;
+        _dek = null;
     }
 }
