@@ -168,6 +168,8 @@ class PhobriWebSocketClient(
 
     /**
      * Perform challenge-response authentication with the server.
+     * Awaits the auth.challenge response deterministically via flow filtering — no
+     * busy-wait polling or race-prone job management.
      */
     suspend fun performChallengeResponse(): Boolean {
         val sikBase64 = pairingManager.serverIdentityKey
@@ -198,30 +200,22 @@ class PhobriWebSocketClient(
         sendMessage(challengeMsg)
         addEvent("send", "auth.challenge")
 
-        var success = false
-        var responseReceived = false
+        val message = "$nonce|$ts"
+        val expectedHmac = computeHmacSha256Hex(sik, message)
 
-        val job = CoroutineScope(Dispatchers.IO).launch {
-            incomingMessages.collect { msg ->
-                if (msg.action == "auth.challenge" && msg.type == MessageType.RESPONSE) {
-                    val serverHmac = msg.payload?.jsonObject?.get("hmac")?.jsonPrimitive?.content
-                    if (serverHmac != null) {
-                        val message = "$nonce|$ts"
-                        val expectedHmac = computeHmacSha256Hex(sik, message)
-                        success = serverHmac == expectedHmac
-                    }
-                    responseReceived = true
-                }
-            }
+        val response = withTimeoutOrNull(10_000) {
+            incomingMessages
+                .filter { it.action == "auth.challenge" && it.type == MessageType.RESPONSE }
+                .first()
         }
 
-        withTimeoutOrNull(10_000) {
-            while (!responseReceived && isActive) {
-                delay(100)
-            }
+        val success = if (response != null) {
+            val serverHmac = response.payload?.jsonObject?.get("hmac")?.jsonPrimitive?.content
+            serverHmac != null && serverHmac == expectedHmac
+        } else {
+            false
         }
 
-        job.cancel()
         addEvent(if (success) "auth" else "error",
             if (success) "Challenge-response OK" else "Challenge-response FAILED")
         return success
