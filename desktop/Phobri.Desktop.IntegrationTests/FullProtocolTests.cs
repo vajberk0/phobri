@@ -139,7 +139,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_Connect_And_PingPong()
     {
-        using var ws = await ConnectAsync();
+        using var ws = await ConnectAndAuthenticateAsync();
         Assert.Equal(WebSocketState.Open, ws.State);
 
         // Send ping
@@ -179,7 +179,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_SmsNew_Push()
     {
-        using var ws = await ConnectAsync();
+        using var ws = await ConnectAndAuthenticateAsync();
 
         // Create a test SMS
         var sms = new SmsMessage
@@ -216,7 +216,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_SmsSync_Batch()
     {
-        using var ws = await ConnectAsync();
+        using var ws = await ConnectAndAuthenticateAsync();
 
         // Create a batch of SMS messages
         var messages = new List<SmsMessage>
@@ -269,7 +269,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_CallNew_Push()
     {
-        using var ws = await ConnectAsync();
+        using var ws = await ConnectAndAuthenticateAsync();
 
         var call = new CallLogEntry
         {
@@ -300,7 +300,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_CallSync_Batch()
     {
-        using var ws = await ConnectAsync();
+        using var ws = await ConnectAndAuthenticateAsync();
 
         var calls = new List<CallLogEntry>
         {
@@ -361,7 +361,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_MultiFrame_Message()
     {
-        using var ws = await ConnectAsync();
+        using var ws = await ConnectAndAuthenticateAsync();
 
         // Create a large message body that will likely span multiple frames
         var largeBody = new string('X', 5000) + "🍕"; // Large message spanning multiple frames
@@ -399,8 +399,8 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task REST_Sms_Endpoint_Returns_Data()
     {
-        // First push some data
-        using var ws = await ConnectAsync();
+        // First push some data (must authenticate first)
+        using var ws = await ConnectAndAuthenticateAsync();
 
         var sms = new SmsMessage
         {
@@ -627,6 +627,31 @@ public sealed class FullProtocolTests : IAsyncLifetime
         await ws.ConnectAsync(
             new Uri($"wss://127.0.0.1:{_port}/sync"),
             _cts.Token);
+
+        return ws;
+    }
+
+    /// <summary>
+    /// Connect and authenticate by sending pair.init with the valid pairing token.
+    /// This is required before any data push messages will be accepted.
+    /// </summary>
+    private async Task<ClientWebSocket> ConnectAndAuthenticateAsync()
+    {
+        var ws = await ConnectAsync();
+
+        var payload = JsonSerializer.SerializeToElement(new { token = _pairingToken });
+        var pairInit = new ProtocolMessage
+        {
+            Type = MessageType.Request,
+            Action = "pair.init",
+            Payload = payload
+        };
+        await SendJsonAsync(ws, pairInit);
+
+        // Consume the pair.confirmed response
+        var response = await ReceiveJsonAsync(ws);
+        if (response?.Action != "pair.confirmed")
+            throw new InvalidOperationException($"Authentication failed: {response?.Error ?? "no response"}");
 
         return ws;
     }

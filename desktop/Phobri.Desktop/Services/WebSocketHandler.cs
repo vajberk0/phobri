@@ -41,8 +41,12 @@ public sealed class WebSocketHandler : IWebSocketHandler
 {
     private readonly IDataService _dataService;
     private readonly IPairingService _pairingService;
+    private readonly IPasswordManagerService _passwordManager;
     private WebSocket? _currentSocket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
+
+    // Per-connection authentication state
+    private bool _authenticated;
 
     // Rate limiting for auth attempts
     private int _failedAuthAttempts = 0;
@@ -50,10 +54,11 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private static readonly TimeSpan AuthRateLimitWindow = TimeSpan.FromMinutes(1);
     private const int MaxAuthAttemptsPerWindow = 5;
 
-    public WebSocketHandler(IDataService dataService, IPairingService pairingService)
+    public WebSocketHandler(IDataService dataService, IPairingService pairingService, IPasswordManagerService passwordManager)
     {
         _dataService = dataService;
         _pairingService = pairingService;
+        _passwordManager = passwordManager;
     }
 
     /// <inheritdoc/>
@@ -70,6 +75,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
     {
         Console.WriteLine("[WS] Connection handler started");
         _currentSocket = webSocket;
+        _authenticated = false;
         ConnectionStateChanged?.Invoke(this, true);
 
         try
@@ -78,6 +84,15 @@ public sealed class WebSocketHandler : IWebSocketHandler
 
             while (webSocket.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
+                // Check if the vault has been locked (auto-lock or manual)
+                if (!_passwordManager.IsUnlocked)
+                {
+                    Console.WriteLine("[WS] Vault locked — closing connection");
+                    await webSocket.CloseAsync(
+                        WebSocketCloseStatus.PolicyViolation, "Server locked", ct);
+                    break;
+                }
+
                 var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
 
                 if (result.MessageType == WebSocketMessageType.Close)
@@ -111,10 +126,15 @@ public sealed class WebSocketHandler : IWebSocketHandler
         {
             // Connection closed unexpectedly
         }
+        catch (OperationCanceledException)
+        {
+            // Server shutting down
+        }
         finally
         {
             Console.WriteLine("[WS] Connection handler ended");
             _currentSocket = null;
+            _authenticated = false;
             ConnectionStateChanged?.Invoke(this, false);
         }
     }
@@ -193,6 +213,15 @@ public sealed class WebSocketHandler : IWebSocketHandler
 
     private async Task HandlePushAsync(ProtocolMessage msg, CancellationToken ct)
     {
+        // Reject push messages from unauthenticated connections
+        if (!_authenticated)
+        {
+            Console.WriteLine($"[push] REJECTED {msg.Action} — connection not authenticated");
+            await SendMessageAsync(
+                ProtocolMessage.ErrorMessage("Not authenticated. Send pair.init or auth.challenge first.", msg.Id), ct);
+            return;
+        }
+
         Console.WriteLine($"[push] {msg.Action}");
         try
         {
@@ -384,6 +413,10 @@ public sealed class WebSocketHandler : IWebSocketHandler
         var message = $"{nonce}|{timestamp}";
         var hmac = CryptoService.ComputeHmacSha256Hex(sik, message);
 
+        // Mark this connection as authenticated — the client has proven
+        // knowledge of the SIK
+        _authenticated = true;
+
         await SendMessageAsync(
             ProtocolMessage.Response("auth.challenge",
                 new AuthChallengeResponsePayload { Hmac = hmac },
@@ -418,6 +451,9 @@ public sealed class WebSocketHandler : IWebSocketHandler
                 var confirmed = _pairingService.ConfirmPairing(token);
                 Console.WriteLine($"[pair.init] ConfirmPairing result: {confirmed}");
             }
+
+            // Mark this connection as authenticated
+            _authenticated = true;
 
             await SendMessageAsync(
                 ProtocolMessage.Response("pair.confirmed", new { status = "ok" }), ct);
