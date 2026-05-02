@@ -423,12 +423,13 @@ public sealed class FullProtocolTests : IAsyncLifetime
         await SendJsonAsync(ws, push);
         await Task.Delay(100);
 
-        // Now query via REST
+        // Now query via REST with the pairing token
         var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = (_, _, _, _) => true
         };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        client.DefaultRequestHeaders.Add("X-Phobri-Token", _pairingToken);
 
         var response = await client.GetAsync($"https://127.0.0.1:{_port}/api/v1/sms?limit=50");
         Assert.True(response.IsSuccessStatusCode);

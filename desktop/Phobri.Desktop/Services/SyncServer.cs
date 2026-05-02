@@ -19,6 +19,7 @@ public sealed class SyncServer : IDisposable
     private Task? _runningTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly IPasswordManagerService _passwordManager;
+    private readonly IPairingService _pairingService;
 
     public int Port { get; }
     public bool IsRunning { get; private set; }
@@ -32,6 +33,7 @@ public sealed class SyncServer : IDisposable
     {
         Port = port;
         _passwordManager = passwordManager;
+        _pairingService = pairingService;
 
         var builder = WebApplication.CreateBuilder();
 
@@ -148,35 +150,58 @@ public sealed class SyncServer : IDisposable
             return Results.BadRequest(new { error = "Invalid token" });
         });
 
-        _app.MapGet("/api/v1/sms", async (long? after, int? limit) =>
+        _app.MapGet("/api/v1/sms", async (HttpContext context, long? after, int? limit) =>
         {
-            if (!passwordManager.IsUnlocked)
-                return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+            var tokenError = RequireToken(context);
+            if (tokenError is not null) return tokenError;
 
             var messages = await dataService.GetSmsMessagesAsync(
-                after, limit ?? 100);
+                after, Math.Clamp(limit ?? 100, 1, 500));
             return Results.Ok(new { messages, hasMore = messages.Count >= (limit ?? 100) });
         });
 
-        _app.MapGet("/api/v1/sms/conversation/{address}", async (string address, int? limit) =>
+        _app.MapGet("/api/v1/sms/conversation/{address}", async (HttpContext context, string address, int? limit) =>
         {
-            if (!passwordManager.IsUnlocked)
-                return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+            var tokenError = RequireToken(context);
+            if (tokenError is not null) return tokenError;
 
             var messages = await dataService.GetConversationAsync(
-                address, limit ?? 100);
+                address, Math.Clamp(limit ?? 100, 1, 500));
             return Results.Ok(new { messages });
         });
 
-        _app.MapGet("/api/v1/calls", async (long? after, int? limit) =>
+        _app.MapGet("/api/v1/calls", async (HttpContext context, long? after, int? limit) =>
         {
-            if (!passwordManager.IsUnlocked)
-                return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+            var tokenError = RequireToken(context);
+            if (tokenError is not null) return tokenError;
 
             var calls = await dataService.GetCallLogAsync(
-                after, limit ?? 100);
+                after, Math.Clamp(limit ?? 100, 1, 500));
             return Results.Ok(new { calls, hasMore = calls.Count >= (limit ?? 100) });
         });
+    }
+
+    /// <summary>
+    /// Validates the X-Phobri-Token header against the stored pairing token.
+    /// Returns an error response (401/423) on failure, or null if the request is authorized.
+    /// </summary>
+    private IResult? RequireToken(HttpContext context)
+    {
+        if (!_passwordManager.IsUnlocked)
+            return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+
+        if (!_pairingService.IsPaired)
+            return Results.Json(new { error = "No device paired" }, statusCode: 401);
+
+        var token = context.Request.Headers["X-Phobri-Token"].FirstOrDefault();
+        if (string.IsNullOrEmpty(token))
+            return Results.Json(new { error = "Missing X-Phobri-Token header" }, statusCode: 401);
+
+        if (!_pairingService.ValidateToken(token))
+            return Results.Json(new { error = "Invalid token" }, statusCode: 401);
+
+        _passwordManager.NotifyActivity();
+        return null;
     }
 
     public async Task StartAsync()
