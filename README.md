@@ -69,6 +69,8 @@ phobri/
 
 ### Desktop App
 
+#### GUI Mode
+
 ```bash
 cd desktop/Phobri.Desktop
 dotnet run
@@ -76,6 +78,21 @@ dotnet run
 
 The app starts an Avalonia window with a WebSocket server on port 8765.
 Click "Start Server" to begin listening for phone connections.
+
+#### Headless Server Mode
+
+For servers, headless VMs, or automated testing:
+
+```bash
+cd desktop/Phobri.Desktop
+dotnet run -- --headless
+# or with custom port:
+dotnet run -- --headless --port 9000
+```
+
+This skips the GUI entirely, starts the Kestrel server with TLS, and prints
+the pairing token, certificate fingerprint, and listen addresses.
+Press Ctrl+C to stop.
 
 ### Android App
 
@@ -102,19 +119,67 @@ Click "Start Server" to begin listening for phone connections.
 
 ## Running Tests
 
-### Desktop
+### Quick: All tests via script
+
+```bash
+./phobri_test.sh           # Desktop unit + integration + Android unit
+./phobri_test.sh --quick   # Desktop unit + integration only (fast)
+./phobri_test.sh --unit-only
+```
+
+### Desktop Unit Tests
 
 ```bash
 cd desktop/Phobri.Desktop.Tests
 dotnet test
 ```
 
-### Android
+### Desktop Integration Tests (full protocol)
+
+Starts an ephemeral headless server and tests the entire Android↔Desktop
+protocol — TLS, WebSocket messages, SMS/call sync, REST endpoints — without
+needing an Android device or emulator.
+
+```bash
+cd desktop/Phobri.Desktop.IntegrationTests
+dotnet test
+```
+
+Covers: ping/pong, pairing, SMS push, SMS batch sync, call push, call batch
+sync, server-to-client requests, multi-frame messages, REST queries.
+
+### Android Unit Tests (Robolectric, no emulator needed)
 
 ```bash
 cd android
 ./gradlew test
 ```
+
+### Android Emulator (optional, for manual E2E testing)
+
+```bash
+# One-time setup:
+export ANDROID_HOME=$HOME/android-sdk
+sdkmanager --sdk_root=$ANDROID_HOME "emulator" "system-images;android-35;google_apis;x86_64"
+echo "no" | avdmanager create avd -n "phobri_test" \
+  -k "system-images;android-35;google_apis;x86_64" -d "pixel_8" --force
+
+# Start (headless):
+emulator -avd phobri_test -no-window -no-audio -no-boot-anim \
+  -accel off -gpu swiftshader_indirect -memory 2048
+
+# Install the app:
+cd android && ./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell pm grant com.phobri.android android.permission.READ_SMS
+adb shell pm grant com.phobri.android android.permission.READ_CALL_LOG
+adb shell pm grant com.phobri.android android.permission.READ_PHONE_STATE
+adb shell pm grant com.phobri.android android.permission.POST_NOTIFICATIONS
+```
+
+> ⚠️ Without KVM hardware acceleration, the emulator cold boot takes ~5 minutes.
+> Snapshot boots take ~20s but snapshots can get corrupted. For automated E2E
+> testing, prefer the integration tests above.
 
 ## Key Technology Stack
 

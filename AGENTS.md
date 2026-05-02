@@ -32,15 +32,17 @@ Phobri is a two-app system for syncing SMS and call logs from Android to Desktop
 
 ### Desktop (C# / Avalonia 12)
 - Project: `desktop/Phobri.Desktop/`
-- Tests: `desktop/Phobri.Desktop.Tests/`
+- Unit tests: `desktop/Phobri.Desktop.Tests/`
+- Integration tests: `desktop/Phobri.Desktop.IntegrationTests/` (full protocol E2E)
 - Build: `dotnet build`
 - Test: `dotnet test`
 - Target: `.NET 10`, Avalonia 12.0.2
 - **MVVM pattern** via `CommunityToolkit.Mvvm` (source generators)
 - **Compiled bindings** enabled by default in Avalonia 12
 - Kestrel server runs **embedded** in the Avalonia app
+- **Headless mode:** `dotnet run -- --headless` runs the server without GUI (for servers, CI, testing)
 - Data stored in `~/.phobri/` (config, SQLite db, TLS cert)
-- **DI container** configured in `App.axaml.cs`
+- **DI container** configured in `App.axaml.cs` (GUI) and `Program.ConfigureHeadlessServices()` (headless)
 - **Namespaces:** `Phobri.Desktop.Models`, `.Services`, `.ViewModels`, `.Views`, `.Infrastructure`
 
 ### Android (Kotlin)
@@ -104,6 +106,31 @@ Call: `id`, `number`, `contactName`, `date`, `duration`, `type`
 - [ ] Export conversations
 - [ ] Multiple device pairing
 
+## CI / Headless Testing
+
+The desktop app supports a `--headless` flag that runs the Kestrel server
+without any GUI or Avalonia dependency, making it suitable for CI and
+headless VMs. Integration tests in `desktop/Phobri.Desktop.IntegrationTests/`
+use this to spin up an ephemeral server and test the entire protocol
+(TLS, WebSocket, REST, pairing, SMS/call sync) in ~3 seconds without
+needing an Android device or emulator.
+
+### Headless server
+```bash
+cd desktop/Phobri.Desktop && dotnet run -- --headless
+```
+
+### Android emulator (headless VM)
+An AVD named `phobri_test` (android-35, x86_64, google_apis) is pre-configured.
+The emulator can boot without KVM but is slow (~20s snapshot, ~5min cold boot).
+Hardware acceleration (KVM) is strongly recommended for regular use.
+
+```bash
+export ANDROID_HOME=$HOME/android-sdk
+emulator -avd phobri_test -no-window -no-audio -no-boot-anim \
+  -accel off -gpu swiftshader_indirect -memory 2048
+```
+
 ## Android Build Setup (This Machine)
 
 The Android SDK is installed at `~/android-sdk` (not system-wide).
@@ -131,15 +158,20 @@ git push
 
 ## Test Commands
 ```bash
-# Desktop build and test
-cd desktop/Phobri.Desktop && dotnet build
+# Quick: desktop unit + integration + android unit
+./phobri_test.sh
+
+# Desktop unit tests only
 cd desktop/Phobri.Desktop.Tests && dotnet test
+
+# Desktop integration tests (full protocol, no Android needed)
+cd desktop/Phobri.Desktop.IntegrationTests && dotnet test
 
 # Android test (needs Android SDK)
 cd android && ./gradlew test
 
-# Full check (android + desktop)
-cd android && ./gradlew test && cd ../desktop/Phobri.Desktop.Tests && dotnet test && echo "All: OK"
+# Full check (all tests)
+cd android && ./gradlew test && cd ../desktop/Phobri.Desktop.Tests && dotnet test && cd ../Phobri.Desktop.IntegrationTests && dotnet test && echo "All: OK"
 ```
 
 ## File Organization Notes

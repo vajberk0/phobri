@@ -367,14 +367,22 @@ phobri/
 │   │       ├── TlsCertificateGenerator.cs
 │   │       └── ConfigurationManager.cs
 │   │
-│   └── Phobri.Desktop.Tests/
-│       ├── Phobri.Desktop.Tests.csproj
-│       ├── Services/
-│       │   ├── ExternalIpServiceTests.cs
-│       │   ├── UdpWakeServiceTests.cs
-│       │   └── PairingServiceTests.cs
-│       └── Models/
-│           └── ProtocolTests.cs
+│   ├── Phobri.Desktop.Tests/
+│   │   ├── Phobri.Desktop.Tests.csproj
+│   │   ├── Services/
+│   │   │   ├── ExternalIpServiceTests.cs
+│   │   │   ├── UdpWakeServiceTests.cs
+│   │   │   ├── PairingServiceTests.cs
+│   │   │   ├── DataServiceTests.cs
+│   │   │   └── TlsCertificateGeneratorTests.cs
+│   │   └── Models/
+│   │       └── ProtocolTests.cs
+│   │
+│   └── Phobri.Desktop.IntegrationTests/
+│       ├── Phobri.Desktop.IntegrationTests.csproj
+│       └── FullProtocolTests.cs      # E2E protocol tests (TLS, WS, REST)
+│
+├── phobri_test.sh                    # Unified test runner script
 │
 └── shared/
     └── protocol.md                  # Protocol documentation (normative)
@@ -440,13 +448,24 @@ phobri/
 - **Integration tests:** WebSocket client against a test server
 
 ### Desktop
-- **Unit tests:** All services, ViewModels
-- **Integration tests:** SyncServer with in-memory WebSocket test client
+- **Unit tests:** All services, ViewModels (`desktop/Phobri.Desktop.Tests/`)
+- **Integration tests:** Full protocol E2E — spin up headless server, connect
+  simulated Android client, exercise TLS, WebSocket, pairing, SMS/call sync,
+  REST endpoints (`desktop/Phobri.Desktop.IntegrationTests/`)
+- **Headless server mode:** `dotnet run -- --headless` runs the Kestrel server
+  without GUI, usable for CI, automated testing, and headless VMs
 - **View tests:** ViewModel binding correctness
 
 ### Shared Protocol
 - JSON roundtrip tests on both sides
 - Edge cases: empty messages, long messages, special characters, null fields
+
+### CI / Automated Testing
+- `./phobri_test.sh` runs all tests (desktop unit + integration + android unit)
+- `./phobri_test.sh --quick` runs desktop-only tests (fastest)
+- Android emulator is pre-configured (AVD: `phobri_test`, android-35, x86_64)
+  but without KVM hardware acceleration it is too slow for CI; use the
+  integration test project instead for automated protocol verification
 
 ---
 
