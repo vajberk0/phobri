@@ -5,24 +5,33 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.phobri.android.BuildConfig
 import com.phobri.android.pairing.PairingManager
-import com.phobri.android.network.IpDetector
+import com.phobri.android.service.SyncForegroundService
+import com.phobri.android.sync.ClientEvent
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Main screen for the Android app.
- * Shows pairing, connection status, and server controls.
+ * Shows pairing, real-time connection status, message counters, and event log.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,14 +44,77 @@ fun MainScreen(
     val pairingManager = remember { PairingManager(context) }
 
     var isPaired by remember { mutableStateOf(pairingManager.isPaired) }
-    var isSyncing by remember { mutableStateOf(false) }
     var pairingCode by remember { mutableStateOf("") }
     var manualHost by remember { mutableStateOf(pairingManager.desktopHost ?: "") }
     var manualPort by remember { mutableStateOf(pairingManager.desktopPort.toString()) }
-    var localIp by remember { mutableStateOf(IpDetector.getLocalIpAddress() ?: "Unknown") }
 
-    val hasPermissions = requiredPermissions.all { perm ->
-        ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+    // Reactive permission check
+    var permissionCheckTick by remember { mutableStateOf(0) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissionCheckTick++ }
+
+    val hasPermissions = remember(permissionCheckTick) {
+        requiredPermissions.all { perm ->
+            ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    // Collect real connection state from the foreground service
+    val isSyncing by SyncForegroundService.isServiceRunning.collectAsState()
+    val connected by SyncForegroundService.connectionState.collectAsState()
+    val sentCount by SyncForegroundService.sentCount.collectAsState()
+    val receivedCount by SyncForegroundService.receivedCount.collectAsState()
+    val lastError by SyncForegroundService.lastError.collectAsState()
+    val eventLog by SyncForegroundService.eventLog.collectAsState()
+
+    val listState = rememberLazyListState()
+    val clipboardManager = LocalClipboardManager.current
+    var showLogDialog by remember { mutableStateOf(false) }
+
+    // Auto-scroll event log to bottom
+    LaunchedEffect(eventLog.size) {
+        if (eventLog.isNotEmpty()) {
+            listState.animateScrollToItem(eventLog.size - 1)
+        }
+    }
+
+    // Log dialog
+    if (showLogDialog) {
+        val logItems = remember(eventLog) { eventLog.toList() }
+        AlertDialog(
+            onDismissRequest = { showLogDialog = false },
+            title = { 
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Event Log", modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        val text = logItems.joinToString("\n") { "${it.type}: ${it.detail}" }
+                        clipboardManager.setText(AnnotatedString(text))
+                    }) {
+                        Text("Copy", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            },
+            text = {
+                if (logItems.isEmpty()) {
+                    Text("No events yet.")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)
+                    ) {
+                        items(logItems.size) { index ->
+                            val event = logItems[index]
+                            LogEntry(event)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLogDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -59,46 +131,87 @@ fun MainScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Status Card
+            // ── Status Card ──
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (isSyncing)
-                        MaterialTheme.colorScheme.primaryContainer
-                    else
-                        MaterialTheme.colorScheme.surfaceVariant
+                    containerColor = when {
+                        connected -> MaterialTheme.colorScheme.primaryContainer
+                        isSyncing -> MaterialTheme.colorScheme.tertiaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
                 )
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Status", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
+                Column(modifier = Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = if (isSyncing) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            imageVector = when {
+                                connected -> Icons.Default.CheckCircle
+                                isSyncing -> Icons.Default.Sync
+                                else -> Icons.Default.Warning
+                            },
                             contentDescription = null,
-                            tint = if (isSyncing)
-                                MaterialTheme.colorScheme.primary
-                            else
-                                MaterialTheme.colorScheme.error
+                            tint = when {
+                                connected -> MaterialTheme.colorScheme.primary
+                                isSyncing -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.error
+                            }
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isSyncing) "Syncing" else "Not syncing",
-                            style = MaterialTheme.typography.bodyLarge
+                            text = when {
+                                connected -> "Connected"
+                                isSyncing -> "Connecting..."
+                                else -> "Not syncing"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        // Log button
+                        if (eventLog.isNotEmpty() || isSyncing) {
+                            FilledTonalButton(
+                                onClick = { showLogDialog = true },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Menu,
+                                    contentDescription = "Log",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Log", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+
+                    // Counters
+                    if (isSyncing) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Sent: $sentCount  •  Received: $receivedCount",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        text = "Local IP: $localIp",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+
+                    // Last error (selectable)
+                    if (lastError != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        SelectionContainer {
+                            Text(
+                                text = "⚠ ${lastError!!}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                 }
             }
 
-            // Permissions Card
+            // ── Permissions (if needed) ──
             if (!hasPermissions) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -106,32 +219,25 @@ fun MainScreen(
                         containerColor = MaterialTheme.colorScheme.errorContainer
                     )
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Permissions Required",
-                            style = MaterialTheme.typography.titleMedium)
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Permissions Required", style = MaterialTheme.typography.titleMedium)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("Phobri needs SMS, Call Log, and Phone permissions to sync data.",
-                            style = MaterialTheme.typography.bodySmall)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = onPermissionsRequested) {
+                        Button(onClick = {
+                            permissionLauncher.launch(requiredPermissions.toTypedArray())
+                        }) {
                             Text("Grant Permissions")
                         }
                     }
                 }
             }
 
-            // Pairing Section
+            // ── Pairing ──
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
                     Text("Device Pairing", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     if (!isPaired) {
-                        Text(
-                            "Enter the pairing token shown on your desktop:",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
                             value = pairingCode,
                             onValueChange = { pairingCode = it },
@@ -140,7 +246,7 @@ fun MainScreen(
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation()
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
                         Button(
                             onClick = {
                                 if (pairingCode.isNotBlank()) {
@@ -164,7 +270,7 @@ fun MainScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Paired to desktop", style = MaterialTheme.typography.bodyLarge)
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         TextButton(onClick = {
                             pairingManager.clearPairing()
                             isPaired = false
@@ -175,11 +281,11 @@ fun MainScreen(
                 }
             }
 
-            // Connection Settings
+            // ── Connection Settings ──
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
                     Text("Connection", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     OutlinedTextField(
                         value = manualHost,
                         onValueChange = { manualHost = it },
@@ -187,7 +293,7 @@ fun MainScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     OutlinedTextField(
                         value = manualPort,
                         onValueChange = { manualPort = it },
@@ -198,20 +304,27 @@ fun MainScreen(
                 }
             }
 
+            // Spacer to push button to bottom
             Spacer(modifier = Modifier.weight(1f))
 
-            // Sync Control Button
+            // Version
+            Text(
+                text = "v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 4.dp)
+            )
+
+            // ── Sync Control Button ──
             Button(
                 onClick = {
                     if (isSyncing) {
                         onStopSync()
-                        isSyncing = false
                     } else {
                         onStartSync(
                             manualHost.ifBlank { "192.168.1.1" },
                             manualPort.toIntOrNull() ?: 8765
                         )
-                        isSyncing = true
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -231,6 +344,36 @@ fun MainScreen(
                 Text(if (isSyncing) "Stop Sync" else "Start Sync")
             }
         }
+    }
+}
+
+@Composable
+private fun LogEntry(event: ClientEvent) {
+    val emoji = when (event.type) {
+        "connect" -> "🔌"
+        "disconnect" -> "🔌"
+        "send" -> "⬆"
+        "recv" -> "⬇"
+        "error" -> "❌"
+        "auth" -> "🔐"
+        else -> "•"
+    }
+    val color = when (event.type) {
+        "error" -> MaterialTheme.colorScheme.error
+        "send" -> MaterialTheme.colorScheme.primary
+        "recv" -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    SelectionContainer {
+        Text(
+            text = "$emoji ${event.detail}",
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace
+            ),
+            color = color,
+            modifier = Modifier.padding(vertical = 1.dp)
+        )
     }
 }
 

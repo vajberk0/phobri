@@ -26,6 +26,9 @@ public interface IPairingService
     /// <summary>The Server Identity Key for challenge-response (null if locked).</summary>
     byte[]? ServerIdentityKey { get; }
 
+    /// <summary>Whether a pending (unconfirmed) pairing token exists.</summary>
+    bool HasPendingToken { get; }
+
     /// <summary>Generate a new pairing token for a pending pair request.</summary>
     string GeneratePairingToken();
 
@@ -35,7 +38,7 @@ public interface IPairingService
     /// <summary>Clear the current pairing (factory reset).</summary>
     void Unpair();
 
-    /// <summary>Check if a provided token matches the stored pairing token.</summary>
+    /// <summary>Check if a provided token matches the stored or pending pairing token.</summary>
     bool ValidateToken(string token);
 }
 
@@ -45,6 +48,9 @@ public sealed class PairingService : IPairingService
     private readonly IPasswordManagerService _passwordManager;
     private readonly string _certPath;
     private X509Certificate2 _certificate;
+
+    /// <summary>Pending pairing token that hasn't been confirmed yet.</summary>
+    private string? _pendingToken;
 
     public PairingService(ConfigurationManager config, IPasswordManagerService passwordManager)
     {
@@ -62,6 +68,10 @@ public sealed class PairingService : IPairingService
     public string? PairingToken => _passwordManager.PairingToken;
 
     /// <inheritdoc/>
+    public bool HasPendingToken =>
+        _passwordManager.IsUnlocked && _pendingToken is not null && !IsPaired;
+
+    /// <inheritdoc/>
     public X509Certificate2 Certificate => _certificate;
 
     /// <inheritdoc/>
@@ -75,32 +85,61 @@ public sealed class PairingService : IPairingService
     public string GeneratePairingToken()
     {
         var bytes = RandomNumberGenerator.GetBytes(32);
-        return Convert.ToHexStringLower(bytes);
+        var token = Convert.ToHexStringLower(bytes);
+        _pendingToken = token;
+        return token;
     }
 
     /// <inheritdoc/>
     public bool ConfirmPairing(string token)
     {
         if (string.IsNullOrWhiteSpace(token) || token.Length != 64)
+        {
+            Console.WriteLine($"[ConfirmPairing] Invalid token format (len={token?.Length ?? 0})");
             return false;
+        }
 
         if (!_passwordManager.IsUnlocked)
+        {
+            Console.WriteLine("[ConfirmPairing] Password manager is LOCKED");
             return false;
+        }
 
-        // Store token encrypted with DEK
-        _passwordManager.StorePairingToken(token);
+        // Accept the pending token or an already-stored token
+        if (_pendingToken is not null &&
+            string.Equals(_pendingToken, token, StringComparison.Ordinal))
+        {
+            Console.WriteLine("[ConfirmPairing] Pending token matches — storing...");
+            // Pending token confirmed — store it
+            _passwordManager.StorePairingToken(token);
+            _pendingToken = null;
 
-        // Update cert fingerprint in config
-        var config = _config.Load();
-        config = config with { CertFingerprint = CertificateFingerprint };
-        _config.Save(config);
+            var config = _config.Load();
+            config = config with { CertFingerprint = CertificateFingerprint };
+            _config.Save(config);
 
-        return true;
+            Console.WriteLine("[ConfirmPairing] Pairing confirmed and saved!");
+            return true;
+        }
+
+        Console.WriteLine($"[ConfirmPairing] Pending token mismatch. Pending: {(_pendingToken is null ? "null" : _pendingToken[..16] + "...")}, Received: {token[..16]}...");
+
+        // If already paired (e.g., re-confirming after restart), validate against stored token
+        if (IsPaired && PairingToken is not null &&
+            string.Equals(PairingToken, token, StringComparison.Ordinal))
+        {
+            Console.WriteLine("[ConfirmPairing] Already paired — token matches stored");
+            return true;
+        }
+
+        return false;
     }
 
     /// <inheritdoc/>
     public void Unpair()
     {
+        _pendingToken = null;
+
         // Lock the password manager to clear in-memory token, then unlock
         _passwordManager.Lock();
 
@@ -117,10 +156,24 @@ public sealed class PairingService : IPairingService
     /// <inheritdoc/>
     public bool ValidateToken(string token)
     {
-        if (!IsPaired || PairingToken is null)
-            return false;
+        // Check against confirmed pairing token
+        if (IsPaired && PairingToken is not null)
+        {
+            var match = string.Equals(PairingToken, token, StringComparison.Ordinal);
+            Console.WriteLine($"[ValidateToken] Checking stored token: match={match}");
+            return match;
+        }
 
-        return string.Equals(PairingToken, token, StringComparison.Ordinal);
+        // Check against pending (unconfirmed) token
+        if (_pendingToken is not null &&
+            string.Equals(_pendingToken, token, StringComparison.Ordinal))
+        {
+            Console.WriteLine("[ValidateToken] Pending token MATCH");
+            return true;
+        }
+
+        Console.WriteLine($"[ValidateToken] No match. Pending token is {(_pendingToken is null ? "null" : "set")}");
+        return false;
     }
 
     private X509Certificate2 LoadOrCreateCertificate()

@@ -13,10 +13,15 @@ android {
         applicationId = "com.phobri.android"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = (System.currentTimeMillis() / 1000).toInt()
+        versionName = "1.0." + (System.currentTimeMillis() / 60000).toInt().toString()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Make BuildConfig available
+        buildFeatures {
+            buildConfig = true
+        }
     }
 
     buildTypes {
@@ -65,7 +70,7 @@ dependencies {
 
     // Ktor Client (WebSocket client)
     implementation("io.ktor:ktor-client-core:3.0.3")
-    implementation("io.ktor:ktor-client-cio:3.0.3")
+    implementation("io.ktor:ktor-client-okhttp:3.0.3")
     implementation("io.ktor:ktor-client-websockets:3.0.3")
     implementation("io.ktor:ktor-client-content-negotiation:3.0.3")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")

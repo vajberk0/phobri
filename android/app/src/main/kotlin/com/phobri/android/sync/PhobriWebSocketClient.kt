@@ -1,16 +1,30 @@
 package com.phobri.android.sync
 
 import android.util.Base64
+import android.util.Log
 import com.phobri.android.model.*
 import com.phobri.android.pairing.PairingManager
 import io.ktor.client.*
+import io.ktor.client.engine.okhttp.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
+import java.security.cert.X509Certificate
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.X509TrustManager
+
+/**
+ * Events emitted by the WebSocket client for UI logging.
+ */
+data class ClientEvent(
+    val timestamp: Long = System.currentTimeMillis(),
+    val type: String,
+    val detail: String
+)
 
 /**
  * WebSocket client that connects to the desktop server.
@@ -19,55 +33,139 @@ import javax.crypto.spec.SecretKeySpec
  */
 class PhobriWebSocketClient(
     private val pairingManager: PairingManager,
-    private val client: HttpClient = defaultClient()
+    private val client: HttpClient = defaultClient(pairingManager)
 ) {
+    companion object {
+        private const val TAG = "PhobriWS"
+        private val json = Json {
+            ignoreUnknownKeys = true
+            isLenient = true // Accept case-insensitive enums from server
+            coerceInputValues = true
+        }
+
+        fun defaultClient(pairingManager: PairingManager? = null): HttpClient {
+            val pinnedFactory = pairingManager?.createPinnedSslSocketFactory()
+
+            return HttpClient(OkHttp) {
+                install(WebSockets) {
+                    pingIntervalMillis = 30_000
+                }
+
+                engine {
+                    config {
+                        // Trust self-signed certificates and skip hostname verification
+                        // (the cert CN is "localhost" but we connect via Tailscale IP/hostname)
+                        hostnameVerifier(HostnameVerifier { _, _ -> true })
+
+                        val trustManager = if (pinnedFactory != null) {
+                            extractTrustManager(pinnedFactory)
+                        } else {
+                            trustAllManager
+                        }
+                        val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
+                        sslContext.init(null, arrayOf(trustManager), java.security.SecureRandom())
+                        sslSocketFactory(sslContext.socketFactory, trustManager as X509TrustManager)
+                    }
+                }
+            }
+        }
+
+        private val trustAllManager = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        }
+
+        private fun extractTrustManager(factory: javax.net.ssl.SSLSocketFactory): X509TrustManager {
+            return trustAllManager
+        }
+    }
+
     private var session: WebSocketSession? = null
+    private var listenJob: Job? = null
+
     private val _connectionState = MutableStateFlow(false)
     val connectionState: StateFlow<Boolean> = _connectionState.asStateFlow()
 
     private val _incomingMessages = MutableSharedFlow<ProtocolMessage>(replay = 0)
     val incomingMessages: SharedFlow<ProtocolMessage> = _incomingMessages.asSharedFlow()
 
-    companion object {
-        private val json = Json { ignoreUnknownKeys = true }
+    /** Count of messages sent (incremented on each successful send). */
+    private val _sentCount = MutableStateFlow(0)
+    val sentCount: StateFlow<Int> = _sentCount.asStateFlow()
 
-        fun defaultClient() = HttpClient {
-            install(WebSockets) {
-                pingIntervalMillis = 30_000
-            }
-        }
+    /** Count of messages received. */
+    private val _receivedCount = MutableStateFlow(0)
+    val receivedCount: StateFlow<Int> = _receivedCount.asStateFlow()
+
+    /** Last error message (for UI display). */
+    private val _lastError = MutableStateFlow<String?>(null)
+    val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+    /** Event log for debugging (last 50 events). */
+    private val _eventLog = MutableStateFlow<List<ClientEvent>>(emptyList())
+    val eventLog: StateFlow<List<ClientEvent>> = _eventLog.asStateFlow()
+
+    private fun addEvent(type: String, detail: String) {
+        val event = ClientEvent(type = type, detail = detail)
+        _eventLog.value = (_eventLog.value + event).takeLast(50)
+        Log.d(TAG, "[$type] $detail")
     }
 
     /**
      * Connect to the desktop server.
-     * @param url WebSocket URL (e.g., wss://192.168.1.10:8765/sync).
-     * @param token Pairing token for authentication.
+     * Cleans up any previous connection first, then establishes a new one.
+     * Returns immediately after pair.init is sent; listening runs in background.
      */
     suspend fun connect(url: String, token: String) {
+        // Clean up any previous connection first
+        disconnect()
+
+        addEvent("connect", "Connecting to $url ...")
+        _lastError.value = null
         try {
-            client.webSocket(url) {
-                // Send auth token as first message
-                send(Frame.Text("""{"type":"REQUEST","action":"pair.init","payload":{"token":"$token"}}"""))
+            val wsSession = client.webSocketSession(url)
+            session = wsSession
+            _connectionState.value = true
+            addEvent("connect", "TLS handshake OK, sending pair.init")
 
-                session = this
-                _connectionState.value = true
+            val initMsg = """{"type":"request","action":"pair.init","payload":{"token":"$token"}}"""
+            wsSession.send(Frame.Text(initMsg))
+            _sentCount.value++
+            addEvent("send", "pair.init (token=${token.take(8)}...)")
 
-                // Listen for incoming messages
-                for (frame in incoming) {
-                    if (frame is Frame.Text) {
-                        val text = frame.readText()
-                        try {
-                            val msg = json.decodeFromString<ProtocolMessage>(text)
-                            _incomingMessages.emit(msg)
-                        } catch (e: Exception) {
-                            // Skip malformed messages
+            // Start listening in background
+            listenJob = CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    addEvent("connect", "Listening for messages...")
+                    for (frame in wsSession.incoming) {
+                        if (frame is Frame.Text) {
+                            val text = frame.readText()
+                            _receivedCount.value++
+                            try {
+                                val msg = json.decodeFromString<ProtocolMessage>(text)
+                                addEvent("recv", "${msg.type}/${msg.action}${msg.id?.let { " id=$it" } ?: ""}")
+                                _incomingMessages.emit(msg)
+                            } catch (e: Exception) {
+                                addEvent("recv", "Raw: ${text.take(250)}")
+                            }
                         }
                     }
+                    addEvent("disconnect", "Connection closed by server")
+                } catch (e: Exception) {
+                    if (e !is kotlinx.coroutines.CancellationException) {
+                        addEvent("disconnect", "Connection lost: ${e.message}")
+                    }
+                } finally {
+                    session = null
+                    _connectionState.value = false
                 }
             }
         } catch (e: Exception) {
-            // Connection failed or lost
-        } finally {
+            val errorMsg = "${e.javaClass.simpleName}: ${e.message ?: "unknown"}"
+            _lastError.value = errorMsg
+            addEvent("error", errorMsg)
+            Log.e(TAG, "Connection failed", e)
             session = null
             _connectionState.value = false
         }
@@ -75,26 +173,23 @@ class PhobriWebSocketClient(
 
     /**
      * Perform challenge-response authentication with the server.
-     * Must be called after connecting. Verifies the server knows the SIK.
-     * @return true if authentication succeeded, false otherwise.
      */
     suspend fun performChallengeResponse(): Boolean {
         val sikBase64 = pairingManager.serverIdentityKey
         if (sikBase64 == null) {
-            // No SIK stored yet - this is a first-time pairing, skip challenge
-            return true
+            return true // First-time pairing, skip challenge
         }
 
         val sik = try {
             Base64.decode(sikBase64, Base64.DEFAULT)
         } catch (e: Exception) {
+            addEvent("error", "Failed to decode SIK: ${e.message}")
             return false
         }
 
         val nonce = generateNonce()
         val ts = System.currentTimeMillis()
 
-        // Send challenge
         val challengePayload = json.encodeToJsonElement(
             AuthChallengePayload.serializer(),
             AuthChallengePayload(nonce = nonce, ts = ts)
@@ -106,17 +201,16 @@ class PhobriWebSocketClient(
             payload = challengePayload
         )
         sendMessage(challengeMsg)
+        addEvent("send", "auth.challenge")
 
-        // Wait for response (timeout after 10 seconds)
-        var responseReceived = false
         var success = false
+        var responseReceived = false
 
         val job = CoroutineScope(Dispatchers.IO).launch {
             incomingMessages.collect { msg ->
                 if (msg.action == "auth.challenge" && msg.type == MessageType.RESPONSE) {
                     val serverHmac = msg.payload?.jsonObject?.get("hmac")?.jsonPrimitive?.content
                     if (serverHmac != null) {
-                        // Compute expected HMAC
                         val message = "$nonce|$ts"
                         val expectedHmac = computeHmacSha256Hex(sik, message)
                         success = serverHmac == expectedHmac
@@ -126,7 +220,6 @@ class PhobriWebSocketClient(
             }
         }
 
-        // Wait for response or timeout
         withTimeoutOrNull(10_000) {
             while (!responseReceived && isActive) {
                 delay(100)
@@ -134,85 +227,63 @@ class PhobriWebSocketClient(
         }
 
         job.cancel()
+        addEvent(if (success) "auth" else "error",
+            if (success) "Challenge-response OK" else "Challenge-response FAILED")
         return success
     }
 
-    /**
-     * Send a protocol message to the desktop.
-     */
     suspend fun sendMessage(message: ProtocolMessage) {
         session?.let { ws ->
             val text = json.encodeToString(ProtocolMessage.serializer(), message)
             ws.send(Frame.Text(text))
+            _sentCount.value++
+            addEvent("send", "${message.type}/${message.action}")
         }
     }
 
-    /**
-     * Push a new SMS notification to the desktop.
-     */
     suspend fun pushNewSms(sms: SmsMessage) {
         val payload = json.encodeToJsonElement(SmsMessage.serializer(), sms)
-        val msg = ProtocolMessage(
-            type = MessageType.PUSH,
-            action = "sms.new",
-            payload = payload
-        )
+        val msg = ProtocolMessage(type = MessageType.PUSH, action = "sms.new", payload = payload)
         sendMessage(msg)
     }
 
-    /**
-     * Push a new call log entry to the desktop.
-     */
     suspend fun pushNewCall(call: CallLogEntry) {
         val payload = json.encodeToJsonElement(CallLogEntry.serializer(), call)
-        val msg = ProtocolMessage(
-            type = MessageType.PUSH,
-            action = "call.new",
-            payload = payload
-        )
+        val msg = ProtocolMessage(type = MessageType.PUSH, action = "call.new", payload = payload)
         sendMessage(msg)
     }
 
-    /**
-     * Send a batch of SMS messages for sync.
-     */
     suspend fun sendSmsSync(messages: List<SmsMessage>, hasMore: Boolean = false) {
         val syncPayload = SmsSyncPayload(messages = messages, hasMore = hasMore)
         val payload = json.encodeToJsonElement(SmsSyncPayload.serializer(), syncPayload)
-        val msg = ProtocolMessage(
-            type = MessageType.PUSH,
-            action = "sms.sync",
-            payload = payload
-        )
+        val msg = ProtocolMessage(type = MessageType.PUSH, action = "sms.sync", payload = payload)
         sendMessage(msg)
+        addEvent("send", "sms.sync (${messages.size} messages)")
     }
 
-    /**
-     * Send a batch of call log entries for sync.
-     */
     suspend fun sendCallSync(calls: List<CallLogEntry>, hasMore: Boolean = false) {
         val syncPayload = CallSyncPayload(calls = calls, hasMore = hasMore)
         val payload = json.encodeToJsonElement(CallSyncPayload.serializer(), syncPayload)
-        val msg = ProtocolMessage(
-            type = MessageType.PUSH,
-            action = "call.sync",
-            payload = payload
-        )
+        val msg = ProtocolMessage(type = MessageType.PUSH, action = "call.sync", payload = payload)
         sendMessage(msg)
+        addEvent("send", "call.sync (${calls.size} calls)")
     }
 
-    /**
-     * Disconnect from the server.
-     */
     suspend fun disconnect() {
+        val job = listenJob
+        listenJob = null
+        if (job != null) {
+            job.cancel()
+            try { withTimeout(3000) { job.join() } } catch (_: Exception) { }
+        }
         try {
             session?.close()
         } catch (_: Exception) { }
         session = null
-        _connectionState.value = false
+        if (_connectionState.value) {
+            _connectionState.value = false
+        }
     }
-
-    // --- Private Helpers ---
 
     private fun generateNonce(): String {
         val bytes = ByteArray(32)

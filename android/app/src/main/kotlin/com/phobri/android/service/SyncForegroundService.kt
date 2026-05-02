@@ -16,6 +16,8 @@ import com.phobri.android.model.*
 import com.phobri.android.pairing.PairingManager
 import com.phobri.android.sync.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.*
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -32,18 +34,35 @@ class SyncForegroundService : Service() {
         private const val CHANNEL_ID = "phobri_sync"
         private const val UDP_WAKE_PORT = 9876
 
-        // Actions
         const val ACTION_START = "com.phobri.android.action.START_SYNC"
         const val ACTION_STOP = "com.phobri.android.action.STOP_SYNC"
-
-        // Extras
         const val EXTRA_DESKTOP_HOST = "desktop_host"
         const val EXTRA_DESKTOP_PORT = "desktop_port"
+
+        // Exposed state for the UI
+        private val _isServiceRunning = MutableStateFlow(false)
+        val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
+
+        private val _connectionState = MutableStateFlow(false)
+        val connectionState: StateFlow<Boolean> = _connectionState.asStateFlow()
+
+        private val _sentCount = MutableStateFlow(0)
+        val sentCount: StateFlow<Int> = _sentCount.asStateFlow()
+
+        private val _receivedCount = MutableStateFlow(0)
+        val receivedCount: StateFlow<Int> = _receivedCount.asStateFlow()
+
+        private val _lastError = MutableStateFlow<String?>(null)
+        val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+        // Merged event log from the WS client
+        private val _eventLog = MutableStateFlow<List<ClientEvent>>(emptyList())
+        val eventLog: StateFlow<List<ClientEvent>> = _eventLog.asStateFlow()
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var pairingManager: PairingManager
-    private lateinit var wsClient: PhobriWebSocketClient
+    private var wsClient: PhobriWebSocketClient? = null
     private lateinit var smsReader: SmsReader
     private lateinit var callLogReader: CallLogReader
     private var smsObserver: SmsObserver? = null
@@ -53,11 +72,13 @@ class SyncForegroundService : Service() {
     private var udpSocket: DatagramSocket? = null
     private val json = Json { ignoreUnknownKeys = true }
 
+    // Collection jobs
+    private var stateCollectionJob: Job? = null
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         pairingManager = PairingManager(this)
-        wsClient = PhobriWebSocketClient(pairingManager)
         smsReader = SmsReader(this)
         callLogReader = CallLogReader(this)
     }
@@ -68,7 +89,6 @@ class SyncForegroundService : Service() {
                 val host = intent.getStringExtra(EXTRA_DESKTOP_HOST)
                     ?: pairingManager.desktopHost ?: return START_NOT_STICKY
                 val port = intent.getIntExtra(EXTRA_DESKTOP_PORT, pairingManager.desktopPort)
-
                 startSync(host, port)
             }
             ACTION_STOP -> {
@@ -84,105 +104,126 @@ class SyncForegroundService : Service() {
     override fun onDestroy() {
         stopSync()
         serviceScope.cancel()
+        _isServiceRunning.value = false
         super.onDestroy()
     }
-
-    // --- Start / Stop ---
 
     private fun startSync(host: String, port: Int) {
         if (isRunning) return
         isRunning = true
+        _isServiceRunning.value = true
+
+        // Create a fresh WS client
+        wsClient = PhobriWebSocketClient(pairingManager)
+
+        // Collect state from the client and forward to companion StateFlows
+        val client = wsClient!!
+        stateCollectionJob = serviceScope.launch {
+            launch {
+                client.connectionState.collect { _connectionState.value = it }
+            }
+            launch {
+                client.sentCount.collect { _sentCount.value = it }
+            }
+            launch {
+                client.receivedCount.collect { _receivedCount.value = it }
+            }
+            launch {
+                client.lastError.collect { _lastError.value = it }
+            }
+            launch {
+                client.eventLog.collect { _eventLog.value = it }
+            }
+        }
 
         val token = pairingManager.pairingToken ?: run {
             Log.w(TAG, "Cannot start sync: not paired")
+            _lastError.value = "Not paired"
             stopSelf()
             return
         }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting..."))
-
-        // Start UDP wake listener
         startUdpWakeListener()
-
-        // Start observers for real-time SMS and call detection
         setupObservers()
 
-        // Start WebSocket connection
         serviceScope.launch {
             while (isActive && isRunning) {
                 try {
-                    val url = "wss://$host:$port/sync"
-                    Log.d(TAG, "Connecting to $url")
+                    // Only connect if not already connected
+                    if (!client.connectionState.value) {
+                        val url = "wss://$host:$port/sync"
+                        Log.d(TAG, "Connecting to $url")
 
-                    // Initial sync after connecting
-                    wsClient.connect(url, token)
+                        client.connect(url, token)
 
-                    if (wsClient.connectionState.value) {
-                        // Perform challenge-response to verify server knows the password
-                        val authOk = wsClient.performChallengeResponse()
-                        if (!authOk) {
-                            Log.w(TAG, "Challenge-response failed — server may not have the correct password")
-                            wsClient.disconnect()
-                            updateNotification("Authentication failed — check server password")
-                            delay(30_000) // Longer delay on auth failure
-                            continue
+                        if (client.connectionState.value) {
+                            updateNotification("Connected to desktop")
+
+                            val authOk = client.performChallengeResponse()
+                            if (!authOk) {
+                                Log.w(TAG, "Challenge-response failed")
+                                client.disconnect()
+                                updateNotification("Auth failed - check server password")
+                                delay(30_000)
+                                continue
+                            }
+
+                            performInitialSync()
                         }
-
-                        updateNotification("Connected to desktop")
-                        performInitialSync()
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Connection error", e)
                     updateNotification("Disconnected - retrying...")
                 }
 
-                // Wait before reconnecting
-                delay(5_000)
+                delay(3_000)
             }
         }
     }
 
     private fun stopSync() {
         isRunning = false
+        _isServiceRunning.value = false
+        stateCollectionJob?.cancel()
         serviceScope.launch {
-            wsClient.disconnect()
+            wsClient?.disconnect()
         }
+        wsClient = null
         smsObserver?.stop()
         callObserver?.stop()
         stopUdpWakeListener()
+        _connectionState.value = false
     }
 
-    // --- Initial Sync ---
-
     private suspend fun performInitialSync() {
-        // Sync SMS
-        val smsMessages = smsReader.readRecentMessages(500)
+        val client = wsClient ?: return
+
+        // Sync only recent messages to keep frames small and fast
+        val smsMessages = smsReader.readRecentMessages(50)
         if (smsMessages.isNotEmpty()) {
-            wsClient.sendSmsSync(smsMessages)
+            client.sendSmsSync(smsMessages)
             Log.d(TAG, "Synced ${smsMessages.size} SMS messages")
         }
 
-        // Sync Call Log
-        val calls = callLogReader.readRecentCalls(200)
+        val calls = callLogReader.readRecentCalls(50)
         if (calls.isNotEmpty()) {
-            wsClient.sendCallSync(calls)
+            client.sendCallSync(calls)
             Log.d(TAG, "Synced ${calls.size} call log entries")
         }
 
-        // Listen for incoming messages (sync requests, send commands)
         launchIncomingMessageHandler()
     }
 
-    // --- Observers ---
-
     private fun setupObservers() {
+        val client = wsClient ?: return
+
         smsObserver = SmsObserver(this) {
             serviceScope.launch {
-                if (wsClient.connectionState.value) {
+                if (client.connectionState.value) {
                     val latest = smsReader.readRecentMessages(1)
                     latest.firstOrNull()?.let { sms ->
-                        wsClient.pushNewSms(sms)
-                        Log.d(TAG, "Pushed new SMS from ${sms.address}")
+                        client.pushNewSms(sms)
                     }
                 }
             }
@@ -192,18 +233,15 @@ class SyncForegroundService : Service() {
         callObserver = CallObserver(this)
         callObserver?.start {
             serviceScope.launch {
-                if (wsClient.connectionState.value) {
+                if (client.connectionState.value) {
                     val latest = callLogReader.readRecentCalls(1)
                     latest.firstOrNull()?.let { call ->
-                        wsClient.pushNewCall(call)
-                        Log.d(TAG, "Pushed new call: ${call.number}")
+                        client.pushNewCall(call)
                     }
                 }
             }
         }
     }
-
-    // --- UDP Wake Listener ---
 
     private fun startUdpWakeListener() {
         serviceScope.launch {
@@ -218,8 +256,7 @@ class SyncForegroundService : Service() {
                     val message = String(packet.data, 0, packet.length)
                     if (message == "WAKE") {
                         Log.d(TAG, "Received WAKE packet from ${packet.address.hostAddress}")
-                        // Trigger reconnection if not connected
-                        if (!wsClient.connectionState.value) {
+                        if (wsClient?.connectionState?.value != true) {
                             updateNotification("Woke up - connecting...")
                         }
                     }
@@ -237,38 +274,32 @@ class SyncForegroundService : Service() {
         udpSocket = null
     }
 
-    // --- Incoming Message Handler ---
-
     private fun launchIncomingMessageHandler() {
+        val client = wsClient ?: return
         serviceScope.launch {
-            wsClient.incomingMessages.collect { message ->
+            client.incomingMessages.collect { message ->
                 when (message.type) {
-                    MessageType.REQUEST -> handleRequest(message)
+                    MessageType.REQUEST -> handleRequest(message, client)
                     MessageType.RESPONSE -> Log.d(TAG, "Response: ${message.action}")
-                    else -> { /* ignore other types */ }
+                    else -> { }
                 }
             }
         }
     }
 
-    private suspend fun handleRequest(message: ProtocolMessage) {
+    private suspend fun handleRequest(message: ProtocolMessage, client: PhobriWebSocketClient) {
         when (message.action) {
             "sms.sync.request" -> {
                 val after = message.payload?.jsonObject?.get("after")?.jsonPrimitive?.longOrNull
                 val limit = message.payload?.jsonObject?.get("limit")?.jsonPrimitive?.intOrNull ?: 100
                 val messages = smsReader.readMessages(after = after, limit = limit)
-                wsClient.sendSmsSync(messages)
+                client.sendSmsSync(messages)
             }
             "call.sync.request" -> {
                 val after = message.payload?.jsonObject?.get("after")?.jsonPrimitive?.longOrNull
                 val limit = message.payload?.jsonObject?.get("limit")?.jsonPrimitive?.intOrNull ?: 100
                 val calls = callLogReader.readCallLog(after = after, limit = limit)
-                wsClient.sendCallSync(calls)
-            }
-            "sms.send" -> {
-                // SMS sending requires SEND_SMS permission and SmsManager
-                // Implementation depends on Android permissions
-                Log.d(TAG, "SMS send requested (not implemented)")
+                client.sendCallSync(calls)
             }
         }
     }

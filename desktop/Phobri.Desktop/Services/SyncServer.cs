@@ -67,9 +67,18 @@ public sealed class SyncServer : IDisposable
             KeepAliveInterval = TimeSpan.FromSeconds(30)
         });
 
+        // Simple request logging middleware
+        _app.Use(async (context, next) =>
+        {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {context.Connection.RemoteIpAddress}:{context.Connection.RemotePort} → {context.Request.Method} {context.Request.Path}");
+            await next();
+        });
+
         // Map WebSocket endpoint
         _app.Map("/sync", async (HttpContext context) =>
         {
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] WS connection attempt from {context.Connection.RemoteIpAddress}");
+
             if (!context.WebSockets.IsWebSocketRequest)
             {
                 context.Response.StatusCode = 400;
@@ -85,14 +94,9 @@ public sealed class SyncServer : IDisposable
                 return;
             }
 
-            // Validate pairing token from header
-            var token = context.Request.Headers["X-Phobri-Token"].FirstOrDefault();
-            if (string.IsNullOrEmpty(token) || !pairingService.ValidateToken(token))
-            {
-                context.Response.StatusCode = 401;
-                await context.Response.WriteAsync("Unauthorized: invalid or missing token");
-                return;
-            }
+            // Authentication is done via the first WebSocket message (pair.init),
+            // not via HTTP header. The WebSocketHandler validates the token.
+            // (REST endpoints still use X-Phobri-Token header.)
 
             // Notify password manager of activity (reset auto-lock timer)
             passwordManager.NotifyActivity();

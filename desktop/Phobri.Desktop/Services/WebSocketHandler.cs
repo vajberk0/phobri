@@ -68,6 +68,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
     /// <inheritdoc/>
     public async Task HandleConnectionAsync(WebSocket webSocket, CancellationToken ct)
     {
+        Console.WriteLine("[WS] Connection handler started");
         _currentSocket = webSocket;
         ConnectionStateChanged?.Invoke(this, true);
 
@@ -112,6 +113,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
         }
         finally
         {
+            Console.WriteLine("[WS] Connection handler ended");
             _currentSocket = null;
             ConnectionStateChanged?.Invoke(this, false);
         }
@@ -191,6 +193,9 @@ public sealed class WebSocketHandler : IWebSocketHandler
 
     private async Task HandlePushAsync(ProtocolMessage msg, CancellationToken ct)
     {
+        Console.WriteLine($"[push] {msg.Action}");
+        try
+        {
         switch (msg.Action)
         {
             case "sms.new":
@@ -290,6 +295,11 @@ public sealed class WebSocketHandler : IWebSocketHandler
                     ct);
                 break;
         }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[push] ERROR in {msg.Action}: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private async Task HandleResponseAsync(ProtocolMessage msg, CancellationToken ct)
@@ -384,20 +394,37 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private async Task HandlePairInitAsync(ProtocolMessage msg, CancellationToken ct)
     {
         // Validate pairing token
-        if (!msg.Payload.HasValue) return;
+        if (!msg.Payload.HasValue)
+        {
+            Console.WriteLine("[pair.init] No payload");
+            return;
+        }
 
         var payload = msg.Payload.Value;
         string? token = null;
         if (payload.TryGetProperty("token", out var tokenElem))
             token = tokenElem.GetString();
 
+        Console.WriteLine($"[pair.init] Received token: {(token is null ? "null" : token[..Math.Min(16, token.Length)] + "...")}");
+        Console.WriteLine($"[pair.init] IsPaired: {_pairingService.IsPaired}, HasPendingToken: {_pairingService.HasPendingToken}");
+        Console.WriteLine($"[pair.init] Stored token: {(_pairingService.PairingToken is null ? "null" : _pairingService.PairingToken[..Math.Min(16, _pairingService.PairingToken.Length)] + "...")}");
+
         if (token is not null && _pairingService.ValidateToken(token))
         {
+            Console.WriteLine("[pair.init] Token VALID");
+            // If this is a pending (first-time) token, confirm the pairing
+            if (!_pairingService.IsPaired)
+            {
+                var confirmed = _pairingService.ConfirmPairing(token);
+                Console.WriteLine($"[pair.init] ConfirmPairing result: {confirmed}");
+            }
+
             await SendMessageAsync(
                 ProtocolMessage.Response("pair.confirmed", new { status = "ok" }), ct);
         }
         else
         {
+            Console.WriteLine("[pair.init] Token INVALID — sending error");
             await SendMessageAsync(
                 ProtocolMessage.ErrorMessage("Invalid or missing pairing token", msg.Id), ct);
         }

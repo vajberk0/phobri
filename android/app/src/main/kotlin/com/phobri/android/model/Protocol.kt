@@ -1,6 +1,7 @@
 package com.phobri.android.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
@@ -18,7 +19,10 @@ data class ProtocolMessage(
 
 @Serializable
 enum class MessageType {
-    REQUEST, RESPONSE, PUSH, ERROR
+    @SerialName("request") REQUEST,
+    @SerialName("response") RESPONSE,
+    @SerialName("push") PUSH,
+    @SerialName("error") ERROR
 }
 
 /**
