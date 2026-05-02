@@ -10,7 +10,7 @@ Phobri is a two-app system for syncing SMS and call logs from Android to Desktop
 - **Android app:** Kotlin + Jetpack Compose + Ktor client → connects as WebSocket client
 - **Desktop app:** C# + Avalonia 12 + Kestrel → runs WebSocket/HTTP server
 - **Communication:** WSS (TLS 1.3) with TOFU certificate pinning
-- **Repository:** `/home/shipadmin/phobri`
+- **Repository:** https://github.com/vajberk0/phobri
 
 ## Key Documents
 
@@ -25,11 +25,10 @@ Phobri is a two-app system for syncing SMS and call logs from Android to Desktop
 
 ### General
 1. **Read PLAN.md first** — it has the definitive architecture
-2. **Never rewrite everything** — prefer incremental changes
-3. **Keep tests passing** — run `dotnet test` after desktop changes
-4. **Protocol changes must update `shared/protocol.md`**
-5. **Both apps must agree on JSON field names** — use camelCase
-6. **All JSON uses camelCase** — `kotlinx.serialization` and `System.Text.Json` both configured
+2. **Keep tests passing** — run `dotnet test` after desktop changes and `./gradlew test` after Android changes
+3. **Protocol changes must update `shared/protocol.md`**
+4. **Both apps must agree on JSON field names** — use camelCase
+5. **All JSON uses camelCase** — `kotlinx.serialization` and `System.Text.Json` both configured
 
 ### Desktop (C# / Avalonia 12)
 - Project: `desktop/Phobri.Desktop/`
@@ -99,10 +98,9 @@ Call: `id`, `number`, `contactName`, `date`, `duration`, `type`
 - Auth: token in `X-Phobri-Token` header or initial WS message
 
 ## Known TODOs & Future Work
+- [ ] Easy server setup in the client via QR code
 - [ ] FCM integration for reliable wake (optional)
-- [ ] MMS support
 - [ ] SMS sending from desktop
-- [ ] mDNS/Bonjour service discovery
 - [ ] Conversation search
 - [ ] Export conversations
 - [ ] Multiple device pairing
