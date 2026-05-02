@@ -89,6 +89,7 @@ All messages are JSON with this structure:
 | Action | Type | Description |
 |--------|------|-------------|
 | `pair.init` | request | Initial pairing with token |
+| `auth.challenge` | request | Challenge-response auth (nonce + ts) |
 | `sms.new` | push | New SMS received on phone |
 | `sms.sync` | push | Batch SMS sync |
 | `call.new` | push | New call log entry |
@@ -101,6 +102,7 @@ All messages are JSON with this structure:
 | Action | Type | Description |
 |--------|------|-------------|
 | `pair.confirmed` | response | Pairing accepted |
+| `auth.challenge` | response | Challenge-response HMAC response |
 | `sms.sync.request` | request | Request SMS sync |
 | `call.sync.request` | request | Request call log sync |
 | `sms.send` | request | Send SMS from desktop |
@@ -140,7 +142,54 @@ All messages are JSON with this structure:
 
 `type` enum: `incoming`, `outgoing`, `missed`, `rejected`, `blocked`
 
-## 5. UDP Wake Protocol
+## 5. Password-Based Security
+
+Phobri uses a password to encrypt all data at rest and authenticate the server
+to the client on each connection.
+
+### 5.1 Envelope Encryption
+
+- A random **Data Encryption Key (DEK)** encrypts the SQLite database
+- A random **Server Identity Key (SIK)** signs connection challenges
+- Both keys are encrypted with a **Key Encryption Key (KEK)** derived from the
+  user's password via PBKDF2-HMAC-SHA256 (600,000 iterations)
+- AES-256-GCM is used for all symmetric encryption
+
+### 5.2 Challenge-Response Protocol
+
+On each connection, the Android client verifies the desktop server knows the
+password-derived SIK:
+
+1. Client generates a random 32-byte nonce and current timestamp
+2. Client sends `auth.challenge` request with `nonce` and `ts`
+3. Server computes `HMAC-SHA256(SIK, nonce|ts)` and returns the hex-encoded HMAC
+4. Client verifies the HMAC against its stored SIK
+5. If verification fails, the client disconnects
+
+### 5.3 auth.challenge Payload
+
+**Request:**
+```json
+{
+  "nonce": "64-char-hex-random-nonce",
+  "ts": 1714608000000
+}
+```
+
+**Response:**
+```json
+{
+  "hmac": "hmac-sha256-hex-result"
+}
+```
+
+### 5.4 Auto-Lock
+
+The desktop app auto-locks after 2 minutes of inactivity (configurable).
+When locked, the server refuses WebSocket connections with HTTP 423 and
+clears all decrypted keys from memory.
+
+## 6. UDP Wake Protocol
 
 Desktop sends a UDP datagram containing the ASCII string `"WAKE"` to the
 Android device on port 9876. This signals the Android app to initiate a
@@ -148,7 +197,7 @@ WebSocket connection.
 
 **Packet:** 4 bytes: `0x57 0x41 0x4B 0x45` ("WAKE")
 
-## 6. External IP Detection
+## 7. External IP Detection
 
 Desktop fetches external IP from `http://ip.ie.mk/get` and makes it available
 to the Android client for off-LAN connectivity.

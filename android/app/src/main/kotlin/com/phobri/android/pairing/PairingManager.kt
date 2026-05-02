@@ -20,6 +20,7 @@ class PairingManager(context: Context) {
         private const val KEY_CERT_FINGERPRINT = "cert_fingerprint"
         private const val KEY_DESKTOP_HOST = "desktop_host"
         private const val KEY_DESKTOP_PORT = "desktop_port"
+        private const val KEY_SERVER_IDENTITY_KEY = "server_identity_key"
     }
 
     /** Whether a pairing exists. */
@@ -31,6 +32,9 @@ class PairingManager(context: Context) {
     /** The pinned certificate fingerprint. */
     val certFingerprint: String? get() = prefs.getString(KEY_CERT_FINGERPRINT, null)
 
+    /** The server identity key (SIK) for challenge-response verification. */
+    val serverIdentityKey: String? get() = prefs.getString(KEY_SERVER_IDENTITY_KEY, null)
+
     /** Last known desktop host. */
     val desktopHost: String? get() = prefs.getString(KEY_DESKTOP_HOST, null)
 
@@ -40,13 +44,18 @@ class PairingManager(context: Context) {
     /**
      * Store pairing information.
      */
-    fun savePairing(token: String, fingerprint: String, host: String, port: Int = 8765) {
-        prefs.edit()
+    fun savePairing(token: String, fingerprint: String, host: String, port: Int = 8765, sik: String? = null) {
+        val editor = prefs.edit()
             .putString(KEY_PAIRING_TOKEN, token)
             .putString(KEY_CERT_FINGERPRINT, fingerprint)
             .putString(KEY_DESKTOP_HOST, host)
             .putInt(KEY_DESKTOP_PORT, port)
-            .apply()
+
+        if (sik != null) {
+            editor.putString(KEY_SERVER_IDENTITY_KEY, sik)
+        }
+
+        editor.apply()
     }
 
     /**
@@ -58,6 +67,7 @@ class PairingManager(context: Context) {
             .remove(KEY_CERT_FINGERPRINT)
             .remove(KEY_DESKTOP_HOST)
             .remove(KEY_DESKTOP_PORT)
+            .remove(KEY_SERVER_IDENTITY_KEY)
             .apply()
     }
 

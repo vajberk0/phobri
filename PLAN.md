@@ -258,24 +258,58 @@ All messages are JSON with a type discriminator:
 
 ## 6. Security Design
 
-### 6.1 TLS Certificate
+### 6.1 Password-Based Encryption
+
+All sensitive data on the desktop is protected by a user-chosen password:
+
+- **Key Derivation:** PBKDF2-HMAC-SHA256 with 600,000 iterations
+- **Envelope Encryption:**
+  - Random **Data Encryption Key (DEK)** encrypts the SQLite database file
+  - Random **Server Identity Key (SIK)** authenticates the server to the client
+  - Both keys encrypted with a **Key Encryption Key (KEK)** derived from the password
+- **Cipher:** AES-256-GCM for all symmetric encryption
+- **Auto-Lock:** After 2 minutes of inactivity, the app locks and clears all keys from memory
+- **Data at Rest:** Database file on disk is always encrypted (decrypted to `/tmp` only while unlocked)
+- **Config:** Pairing token and keys stored encrypted in `config.json`
+
+### 6.2 TLS Certificate
 - Desktop generates self-signed X.509 cert on first launch
 - Cert saved to `~/.phobri/server.pfx`
 - Android pins the cert's SHA-256 fingerprint on pairing
 - On reconnect, Android validates fingerprint matches
 
-### 6.2 Pairing Flow
+### 6.3 Challenge-Response Authentication
+
+Beyond TLS certificate pinning, the Android client verifies the server
+possesses the correct SIK on every connection:
+
+1. Client sends random nonce + timestamp
+2. Server responds with HMAC-SHA256(SIK, nonce|timestamp)
+3. Client verifies the HMAC against its stored SIK (received during pairing)
+4. If verification fails, client disconnects immediately
+
+This protects against an attacker who steals the TLS certificate from the
+hard drive — they still can't authenticate without the password-derived SIK.
+
+### 6.4 Pairing Flow
 1. Desktop generates a pairing token (32 random hex bytes)
 2. Desktop shows token as QR code and text
 3. User enters token on Android (or scans QR)
 4. Android connects via WSS and sends `pair.init` with token
 5. Desktop validates token, stores pairing
-6. Android stores cert fingerprint + pairing token + desktop addresses
+6. Desktop sends SIK to Android (over the TLS-encrypted channel)
+7. Android stores cert fingerprint + pairing token + SIK + desktop addresses
 
-### 6.3 Data at Rest
-- Desktop SQLite database stored in `~/.phobri/data.db`
-- No encryption at rest (OS-level disk encryption is assumed)
-- Pairing tokens stored in `~/.phobri/config.json`
+### 6.5 Threat Model
+
+| Threat | Protection |
+|--------|-----------|
+| Physical access to powered-off desktop hard drive | All data encrypted with password-derived KEK; DB, config, and TLS cert encrypted at rest |
+| Physical access to unlocked desktop (user is away) | Auto-lock after 2 minutes clears all keys from memory |
+| Desktop hard drive stolen + attacker tries to impersonate server | TLS cert alone insufficient; SIK challenge-response blocks authentication |
+| Network MITM | TLS 1.3 with certificate pinning (TOFU) |
+| Password brute force | PBKDF2 with 600K iterations; rate-limited auth attempts (5/min) |
+| Phone compromise | Phone stores only verification key and pairing token (not message data); attacker still needs TLS cert from desktop |
 
 ---
 

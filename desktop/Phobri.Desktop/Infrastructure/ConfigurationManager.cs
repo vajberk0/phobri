@@ -54,8 +54,12 @@ public sealed class ConfigurationManager
 /// </summary>
 public sealed record PhobriConfig
 {
-    /// <summary>Current pairing token (null if not paired).</summary>
+    /// <summary>Current pairing token (null if not paired).
+    /// Deprecated: use EncryptedPairingToken for new setups.</summary>
     public string? PairingToken { get; init; }
+
+    /// <summary>Pairing token encrypted with DEK (base64).</summary>
+    public string? EncryptedPairingToken { get; init; }
 
     /// <summary>SHA-256 fingerprint of the TLS certificate.</summary>
     public string? CertFingerprint { get; init; }
@@ -65,6 +69,18 @@ public sealed record PhobriConfig
 
     /// <summary>Last known external IP address.</summary>
     public string? ExternalIp { get; init; }
+
+    /// <summary>PBKDF2 salt for password-based KEK derivation (base64).</summary>
+    public string? Salt { get; init; }
+
+    /// <summary>Data Encryption Key encrypted with KEK (base64).</summary>
+    public string? EncryptedDek { get; init; }
+
+    /// <summary>Server Identity Key encrypted with KEK (base64).</summary>
+    public string? EncryptedSik { get; init; }
+
+    /// <summary>Auto-lock timeout in minutes (0 = never auto-lock).</summary>
+    public int AutoLockMinutes { get; init; } = 2;
 
     /// <summary>WebSocket server port.</summary>
     public int WsPort { get; init; } = 8765;

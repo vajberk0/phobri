@@ -11,12 +11,14 @@ namespace Phobri.Desktop.Services;
 /// <summary>
 /// Embedded WebSocket + HTTP server using ASP.NET Core Kestrel.
 /// Runs alongside the Avalonia UI.
+/// Requires password unlock before accepting data connections.
 /// </summary>
 public sealed class SyncServer : IDisposable
 {
     private readonly WebApplication _app;
     private Task? _runningTask;
     private readonly CancellationTokenSource _cts = new();
+    private readonly IPasswordManagerService _passwordManager;
 
     public int Port { get; }
     public bool IsRunning { get; private set; }
@@ -25,9 +27,11 @@ public sealed class SyncServer : IDisposable
         int port,
         IWebSocketHandler wsHandler,
         IPairingService pairingService,
-        IDataService dataService)
+        IDataService dataService,
+        IPasswordManagerService passwordManager)
     {
         Port = port;
+        _passwordManager = passwordManager;
 
         var builder = WebApplication.CreateBuilder();
 
@@ -38,6 +42,7 @@ public sealed class SyncServer : IDisposable
         builder.Services.AddSingleton(wsHandler);
         builder.Services.AddSingleton(pairingService);
         builder.Services.AddSingleton(dataService);
+        builder.Services.AddSingleton(passwordManager);
 
         // Configure Kestrel to listen on all interfaces
         builder.WebHost.UseKestrel(options =>
@@ -72,6 +77,14 @@ public sealed class SyncServer : IDisposable
                 return;
             }
 
+            // Check if server is unlocked
+            if (!passwordManager.IsUnlocked)
+            {
+                context.Response.StatusCode = 423; // Locked
+                await context.Response.WriteAsync("Server is locked. Unlock with password first.");
+                return;
+            }
+
             // Validate pairing token from header
             var token = context.Request.Headers["X-Phobri-Token"].FirstOrDefault();
             if (string.IsNullOrEmpty(token) || !pairingService.ValidateToken(token))
@@ -80,6 +93,9 @@ public sealed class SyncServer : IDisposable
                 await context.Response.WriteAsync("Unauthorized: invalid or missing token");
                 return;
             }
+
+            // Notify password manager of activity (reset auto-lock timer)
+            passwordManager.NotifyActivity();
 
             var webSocket = await context.WebSockets.AcceptWebSocketAsync();
             await wsHandler.HandleConnectionAsync(webSocket, context.RequestAborted);
@@ -92,9 +108,20 @@ public sealed class SyncServer : IDisposable
             {
                 status = "ok",
                 version = "1.0.0",
+                locked = !passwordManager.IsUnlocked,
                 paired = pairingService.IsPaired,
                 fingerprint = pairingService.CertificateFingerprint,
                 timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            });
+        });
+
+        _app.MapGet("/api/v1/auth/status", () =>
+        {
+            return Results.Ok(new
+            {
+                locked = !passwordManager.IsUnlocked,
+                configured = passwordManager.IsConfigured,
+                autoLockMinutes = passwordManager.AutoLockMinutes
             });
         });
 
@@ -119,6 +146,9 @@ public sealed class SyncServer : IDisposable
 
         _app.MapGet("/api/v1/sms", async (long? after, int? limit) =>
         {
+            if (!passwordManager.IsUnlocked)
+                return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+
             var messages = await dataService.GetSmsMessagesAsync(
                 after, limit ?? 100);
             return Results.Ok(new { messages, hasMore = messages.Count >= (limit ?? 100) });
@@ -126,6 +156,9 @@ public sealed class SyncServer : IDisposable
 
         _app.MapGet("/api/v1/sms/conversation/{address}", async (string address, int? limit) =>
         {
+            if (!passwordManager.IsUnlocked)
+                return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+
             var messages = await dataService.GetConversationAsync(
                 address, limit ?? 100);
             return Results.Ok(new { messages });
@@ -133,6 +166,9 @@ public sealed class SyncServer : IDisposable
 
         _app.MapGet("/api/v1/calls", async (long? after, int? limit) =>
         {
+            if (!passwordManager.IsUnlocked)
+                return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+
             var calls = await dataService.GetCallLogAsync(
                 after, limit ?? 100);
             return Results.Ok(new { calls, hasMore = calls.Count >= (limit ?? 100) });

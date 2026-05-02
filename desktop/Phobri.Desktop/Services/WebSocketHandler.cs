@@ -1,14 +1,17 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Phobri.Desktop.Infrastructure;
 using Phobri.Desktop.Models;
 
 namespace Phobri.Desktop.Services;
 
 /// <summary>
 /// Manages WebSocket connections from Android devices.
-/// Handles message routing, push notifications, and command dispatch.
+/// Handles message routing, push notifications, command dispatch,
+/// and password-based challenge-response authentication.
 /// </summary>
 public interface IWebSocketHandler
 {
@@ -40,6 +43,12 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private readonly IPairingService _pairingService;
     private WebSocket? _currentSocket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
+
+    // Rate limiting for auth attempts
+    private int _failedAuthAttempts = 0;
+    private DateTime _lastAuthAttempt = DateTime.MinValue;
+    private static readonly TimeSpan AuthRateLimitWindow = TimeSpan.FromMinutes(1);
+    private const int MaxAuthAttemptsPerWindow = 5;
 
     public WebSocketHandler(IDataService dataService, IPairingService pairingService)
     {
@@ -297,10 +306,79 @@ public sealed class WebSocketHandler : IWebSocketHandler
         switch (msg.Action)
         {
             case "pair.init":
-                // Android initiated pairing
                 await HandlePairInitAsync(msg, ct);
                 break;
+
+            case "auth.challenge":
+                await HandleAuthChallengeAsync(msg, ct);
+                break;
         }
+    }
+
+    private async Task HandleAuthChallengeAsync(ProtocolMessage msg, CancellationToken ct)
+    {
+        // Rate limit auth attempts
+        if ((DateTime.UtcNow - _lastAuthAttempt) > AuthRateLimitWindow)
+        {
+            _failedAuthAttempts = 0;
+        }
+        _lastAuthAttempt = DateTime.UtcNow;
+
+        if (_failedAuthAttempts >= MaxAuthAttemptsPerWindow)
+        {
+            await SendMessageAsync(
+                ProtocolMessage.ErrorMessage("Too many authentication attempts. Try again later.", msg.Id), ct);
+            return;
+        }
+
+        var sik = _pairingService.ServerIdentityKey;
+        if (sik is null)
+        {
+            _failedAuthAttempts++;
+            await SendMessageAsync(
+                ProtocolMessage.ErrorMessage("Server is locked. Unlock with password first.", msg.Id), ct);
+            return;
+        }
+
+        // Extract nonce and timestamp from the challenge
+        string? nonce = null;
+        long timestamp = 0;
+
+        if (msg.Payload.HasValue)
+        {
+            if (msg.Payload.Value.TryGetProperty("nonce", out var nonceElem))
+                nonce = nonceElem.GetString();
+            if (msg.Payload.Value.TryGetProperty("ts", out var tsElem) && tsElem.TryGetInt64(out var ts))
+                timestamp = ts;
+        }
+
+        if (string.IsNullOrEmpty(nonce))
+        {
+            _failedAuthAttempts++;
+            await SendMessageAsync(
+                ProtocolMessage.ErrorMessage("Missing nonce in auth challenge.", msg.Id), ct);
+            return;
+        }
+
+        // Validate timestamp is within 5 minutes to prevent replay
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (Math.Abs(now - timestamp) > 5 * 60 * 1000)
+        {
+            _failedAuthAttempts++;
+            await SendMessageAsync(
+                ProtocolMessage.ErrorMessage("Challenge timestamp expired.", msg.Id), ct);
+            return;
+        }
+
+        // Compute HMAC-SHA256(nonce || timestamp, SIK)
+        var message = $"{nonce}|{timestamp}";
+        var hmac = CryptoService.ComputeHmacSha256Hex(sik, message);
+
+        await SendMessageAsync(
+            ProtocolMessage.Response("auth.challenge",
+                new AuthChallengeResponsePayload { Hmac = hmac },
+                msg.Id),
+            ct);
     }
 
     private async Task HandlePairInitAsync(ProtocolMessage msg, CancellationToken ct)

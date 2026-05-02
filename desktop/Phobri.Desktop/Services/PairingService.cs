@@ -7,13 +7,14 @@ namespace Phobri.Desktop.Services;
 /// <summary>
 /// Manages the Trust-on-First-Use pairing between desktop and Android.
 /// Handles pairing token generation, certificate management, and pairing state.
+/// Integrates with PasswordManagerService for encrypted token storage.
 /// </summary>
 public interface IPairingService
 {
     /// <summary>Whether a device is currently paired.</summary>
     bool IsPaired { get; }
 
-    /// <summary>The current pairing token (null if not paired).</summary>
+    /// <summary>The current pairing token (null if not paired or locked).</summary>
     string? PairingToken { get; }
 
     /// <summary>The TLS certificate used for secure communication.</summary>
@@ -21,6 +22,9 @@ public interface IPairingService
 
     /// <summary>SHA-256 fingerprint of the TLS certificate.</summary>
     string CertificateFingerprint { get; }
+
+    /// <summary>The Server Identity Key for challenge-response (null if locked).</summary>
+    byte[]? ServerIdentityKey { get; }
 
     /// <summary>Generate a new pairing token for a pending pair request.</summary>
     string GeneratePairingToken();
@@ -38,24 +42,24 @@ public interface IPairingService
 public sealed class PairingService : IPairingService
 {
     private readonly ConfigurationManager _config;
+    private readonly IPasswordManagerService _passwordManager;
     private readonly string _certPath;
     private X509Certificate2 _certificate;
 
-    public PairingService(ConfigurationManager config)
+    public PairingService(ConfigurationManager config, IPasswordManagerService passwordManager)
     {
         _config = config;
+        _passwordManager = passwordManager;
         _certPath = Path.Combine(config.DataDir, "server.pfx");
         _certificate = LoadOrCreateCertificate();
-
-        var savedConfig = config.Load();
-        PairingToken = savedConfig.PairingToken;
     }
 
     /// <inheritdoc/>
-    public bool IsPaired => PairingToken is not null;
+    public bool IsPaired =>
+        _passwordManager.IsUnlocked && _passwordManager.PairingToken is not null;
 
     /// <inheritdoc/>
-    public string? PairingToken { get; private set; }
+    public string? PairingToken => _passwordManager.PairingToken;
 
     /// <inheritdoc/>
     public X509Certificate2 Certificate => _certificate;
@@ -65,14 +69,13 @@ public sealed class PairingService : IPairingService
         TlsCertificateGenerator.GetFingerprint(_certificate);
 
     /// <inheritdoc/>
+    public byte[]? ServerIdentityKey => _passwordManager.ServerIdentityKey;
+
+    /// <inheritdoc/>
     public string GeneratePairingToken()
     {
-        // Generate a 32-byte random token as hex string
         var bytes = RandomNumberGenerator.GetBytes(32);
-        var token = Convert.ToHexStringLower(bytes);
-
-        // Don't save yet — wait for confirmation
-        return token;
+        return Convert.ToHexStringLower(bytes);
     }
 
     /// <inheritdoc/>
@@ -81,14 +84,15 @@ public sealed class PairingService : IPairingService
         if (string.IsNullOrWhiteSpace(token) || token.Length != 64)
             return false;
 
-        PairingToken = token;
+        if (!_passwordManager.IsUnlocked)
+            return false;
 
+        // Store token encrypted with DEK
+        _passwordManager.StorePairingToken(token);
+
+        // Update cert fingerprint in config
         var config = _config.Load();
-        config = config with
-        {
-            PairingToken = token,
-            CertFingerprint = CertificateFingerprint
-        };
+        config = config with { CertFingerprint = CertificateFingerprint };
         _config.Save(config);
 
         return true;
@@ -97,20 +101,20 @@ public sealed class PairingService : IPairingService
     /// <inheritdoc/>
     public void Unpair()
     {
-        PairingToken = null;
+        // Lock the password manager to clear in-memory token, then unlock
+        _passwordManager.Lock();
 
         var config = _config.Load();
         config = config with
         {
             PairingToken = null,
+            EncryptedPairingToken = null,
             FcmToken = null
         };
         _config.Save(config);
     }
 
-    /// <summary>
-    /// Check if a provided token matches our stored token.
-    /// </summary>
+    /// <inheritdoc/>
     public bool ValidateToken(string token)
     {
         if (!IsPaired || PairingToken is null)

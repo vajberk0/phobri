@@ -1,18 +1,24 @@
 package com.phobri.android.sync
 
+import android.util.Base64
 import com.phobri.android.model.*
+import com.phobri.android.pairing.PairingManager
 import io.ktor.client.*
 import io.ktor.client.plugins.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * WebSocket client that connects to the desktop server.
- * Handles reconnection, message sending/receiving, and protocol operations.
+ * Handles reconnection, message sending/receiving, protocol operations,
+ * and challenge-response authentication using the Server Identity Key.
  */
 class PhobriWebSocketClient(
+    private val pairingManager: PairingManager,
     private val client: HttpClient = defaultClient()
 ) {
     private var session: WebSocketSession? = null
@@ -65,6 +71,70 @@ class PhobriWebSocketClient(
             session = null
             _connectionState.value = false
         }
+    }
+
+    /**
+     * Perform challenge-response authentication with the server.
+     * Must be called after connecting. Verifies the server knows the SIK.
+     * @return true if authentication succeeded, false otherwise.
+     */
+    suspend fun performChallengeResponse(): Boolean {
+        val sikBase64 = pairingManager.serverIdentityKey
+        if (sikBase64 == null) {
+            // No SIK stored yet - this is a first-time pairing, skip challenge
+            return true
+        }
+
+        val sik = try {
+            Base64.decode(sikBase64, Base64.DEFAULT)
+        } catch (e: Exception) {
+            return false
+        }
+
+        val nonce = generateNonce()
+        val ts = System.currentTimeMillis()
+
+        // Send challenge
+        val challengePayload = json.encodeToJsonElement(
+            AuthChallengePayload.serializer(),
+            AuthChallengePayload(nonce = nonce, ts = ts)
+        )
+        val challengeMsg = ProtocolMessage(
+            type = MessageType.REQUEST,
+            action = "auth.challenge",
+            id = "chal-" + nonce.take(8),
+            payload = challengePayload
+        )
+        sendMessage(challengeMsg)
+
+        // Wait for response (timeout after 10 seconds)
+        var responseReceived = false
+        var success = false
+
+        val job = CoroutineScope(Dispatchers.IO).launch {
+            incomingMessages.collect { msg ->
+                if (msg.action == "auth.challenge" && msg.type == MessageType.RESPONSE) {
+                    val serverHmac = msg.payload?.jsonObject?.get("hmac")?.jsonPrimitive?.content
+                    if (serverHmac != null) {
+                        // Compute expected HMAC
+                        val message = "$nonce|$ts"
+                        val expectedHmac = computeHmacSha256Hex(sik, message)
+                        success = serverHmac == expectedHmac
+                    }
+                    responseReceived = true
+                }
+            }
+        }
+
+        // Wait for response or timeout
+        withTimeoutOrNull(10_000) {
+            while (!responseReceived && isActive) {
+                delay(100)
+            }
+        }
+
+        job.cancel()
+        return success
     }
 
     /**
@@ -140,5 +210,20 @@ class PhobriWebSocketClient(
         } catch (_: Exception) { }
         session = null
         _connectionState.value = false
+    }
+
+    // --- Private Helpers ---
+
+    private fun generateNonce(): String {
+        val bytes = ByteArray(32)
+        java.security.SecureRandom().nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun computeHmacSha256Hex(key: ByteArray, message: String): String {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(key, "HmacSHA256"))
+        val hmacBytes = mac.doFinal(message.toByteArray(Charsets.UTF_8))
+        return hmacBytes.joinToString("") { "%02x".format(it) }
     }
 }

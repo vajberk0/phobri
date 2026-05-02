@@ -58,6 +58,47 @@ class PairingManagerTests {
     }
 
     @Test
+    fun `save pairing stores SIK when provided`() {
+        val sik = "aGVsbG8gd29ybGQgdGhpcyBpcyBhIHRlc3Qgc2VjcmV0"
+        pairingManager.savePairing(
+            token = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6abcd",
+            fingerprint = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+            host = "192.168.1.10",
+            port = 8765,
+            sik = sik
+        )
+
+        assertEquals(sik, pairingManager.serverIdentityKey)
+    }
+
+    @Test
+    fun `save pairing without SIK leaves SIK null`() {
+        pairingManager.savePairing(
+            token = "token",
+            fingerprint = "fingerprint",
+            host = "host",
+            port = 8765
+            // No SIK provided
+        )
+
+        assertNull(pairingManager.serverIdentityKey)
+    }
+
+    @Test
+    fun `clear pairing removes SIK`() {
+        pairingManager.savePairing(
+            token = "token",
+            fingerprint = "fingerprint",
+            host = "host",
+            sik = "somesik"
+        )
+        assertNotNull(pairingManager.serverIdentityKey)
+
+        pairingManager.clearPairing()
+        assertNull(pairingManager.serverIdentityKey)
+    }
+
+    @Test
     fun `update host changes stored host`() {
         pairingManager.savePairing("token", "fingerprint", "192.168.1.10")
         pairingManager.updateHost("10.0.0.5")

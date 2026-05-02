@@ -163,6 +163,27 @@ public sealed record FcmTokenPayload
 }
 
 /// <summary>
+/// Payload for auth.challenge request (phone → desktop).
+/// </summary>
+public sealed record AuthChallengePayload
+{
+    [JsonPropertyName("nonce")]
+    public string Nonce { get; init; } = string.Empty;
+
+    [JsonPropertyName("ts")]
+    public long Timestamp { get; init; }
+}
+
+/// <summary>
+/// Payload for auth.challenge response (desktop → phone).
+/// </summary>
+public sealed record AuthChallengeResponsePayload
+{
+    [JsonPropertyName("hmac")]
+    public string Hmac { get; init; } = string.Empty;
+}
+
+/// <summary>
 /// Centralized JSON serialization context for source-gen perf.
 /// </summary>
 [JsonSerializable(typeof(ProtocolMessage))]
@@ -174,6 +195,8 @@ public sealed record FcmTokenPayload
 [JsonSerializable(typeof(SyncRequest))]
 [JsonSerializable(typeof(PingPayload))]
 [JsonSerializable(typeof(FcmTokenPayload))]
+[JsonSerializable(typeof(AuthChallengePayload))]
+[JsonSerializable(typeof(AuthChallengeResponsePayload))]
 [JsonSerializable(typeof(JsonElement))]
 public partial class JsonContext : JsonSerializerContext
 {

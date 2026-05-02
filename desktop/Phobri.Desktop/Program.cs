@@ -33,20 +33,93 @@ sealed class Program
         Console.WriteLine("Phobri Desktop — Headless Server Mode");
         Console.WriteLine("========================================");
 
-        // Parse optional --port argument
+        // Parse optional arguments
         int port = 8765;
+        string? password = null;
+        string? passwordFile = null;
+
         for (int i = 1; i < args.Length; i++)
         {
             if (args[i] == "--port" && i + 1 < args.Length && int.TryParse(args[i + 1], out var p))
             {
                 port = p;
-                break;
+                i++;
             }
+            else if (args[i] == "--password" && i + 1 < args.Length)
+            {
+                password = args[i + 1];
+                i++;
+            }
+            else if (args[i] == "--password-file" && i + 1 < args.Length)
+            {
+                passwordFile = args[i + 1];
+                i++;
+            }
+        }
+
+        // Resolve password
+        if (password is null && passwordFile is not null)
+        {
+            if (!File.Exists(passwordFile))
+            {
+                Console.WriteLine($"Error: Password file not found: {passwordFile}");
+                return;
+            }
+            password = File.ReadAllText(passwordFile).Trim();
         }
 
         var services = ConfigureHeadlessServices(port);
         var server = services.GetRequiredService<SyncServer>();
         var pairingService = services.GetRequiredService<IPairingService>();
+        var passwordManager = services.GetRequiredService<IPasswordManagerService>();
+        var dataService = services.GetRequiredService<IDataService>();
+
+        // Handle password
+        if (passwordManager.IsConfigured)
+        {
+            if (password is null)
+            {
+                // Prompt for password interactively
+                Console.Write("Enter Phobri password: ");
+                password = ReadPassword();
+                Console.WriteLine();
+            }
+
+            if (!passwordManager.Unlock(password))
+            {
+                Console.WriteLine("Error: Incorrect password.");
+                return;
+            }
+
+            // Unlock the database
+            var dek = passwordManager.DataEncryptionKey;
+            if (dek is not null)
+            {
+                dataService.UnlockAsync(dek).GetAwaiter().GetResult();
+            }
+
+            Console.WriteLine("Vault unlocked successfully.");
+        }
+        else
+        {
+            // First-time setup
+            if (password is null)
+            {
+                Console.Write("Create a new Phobri password: ");
+                password = ReadPassword();
+                Console.WriteLine();
+            }
+
+            passwordManager.SetupPassword(password);
+
+            var dek = passwordManager.DataEncryptionKey;
+            if (dek is not null)
+            {
+                dataService.UnlockAsync(dek).GetAwaiter().GetResult();
+            }
+
+            Console.WriteLine("Password set. Vault created and unlocked.");
+        }
 
         // Print pairing info
         Console.WriteLine($"  Port:       {port} (WSS), {port + 1} (HTTP health)");
@@ -89,6 +162,17 @@ sealed class Program
         }
         finally
         {
+            // Lock and encrypt database before shutdown
+            if (passwordManager.IsUnlocked)
+            {
+                var dek = passwordManager.DataEncryptionKey;
+                if (dek is not null)
+                {
+                    dataService.LockAsync(dek).GetAwaiter().GetResult();
+                }
+                passwordManager.Lock();
+            }
+
             server.StopAsync().GetAwaiter().GetResult();
             server.Dispose();
             Console.WriteLine("Server stopped.");
@@ -110,12 +194,16 @@ sealed class Program
         var configManager = new ConfigurationManager(configDir);
         services.AddSingleton(configManager);
 
+        // --- Password Manager ---
+        var passwordManager = new PasswordManagerService(configManager);
+        services.AddSingleton<IPasswordManagerService>(passwordManager);
+
         // --- Data ---
         var dataService = new DataService(Path.Combine(configDir, "data.db"));
         services.AddSingleton<IDataService>(dataService);
 
         // --- Pairing ---
-        var pairingService = new PairingService(configManager);
+        var pairingService = new PairingService(configManager, passwordManager);
         services.AddSingleton<IPairingService>(pairingService);
 
         // --- Networking ---
@@ -126,9 +214,35 @@ sealed class Program
             port: port,
             wsHandler: sp.GetRequiredService<IWebSocketHandler>(),
             pairingService: sp.GetRequiredService<IPairingService>(),
-            dataService: sp.GetRequiredService<IDataService>()));
+            dataService: sp.GetRequiredService<IDataService>(),
+            passwordManager: sp.GetRequiredService<IPasswordManagerService>()));
 
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>
+    /// Read a password from stdin without echoing.
+    /// </summary>
+    private static string ReadPassword()
+    {
+        var password = new System.Text.StringBuilder();
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.Enter)
+                break;
+            if (key.Key == ConsoleKey.Backspace && password.Length > 0)
+            {
+                password.Length--;
+                Console.Write("\b \b");
+            }
+            else if (!char.IsControl(key.KeyChar))
+            {
+                password.Append(key.KeyChar);
+                Console.Write('*');
+            }
+        }
+        return password.ToString();
     }
 
     // Avalonia configuration, don't remove; also used by visual designer.

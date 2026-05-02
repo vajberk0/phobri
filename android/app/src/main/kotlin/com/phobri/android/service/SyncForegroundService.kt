@@ -57,7 +57,7 @@ class SyncForegroundService : Service() {
         super.onCreate()
         createNotificationChannel()
         pairingManager = PairingManager(this)
-        wsClient = PhobriWebSocketClient()
+        wsClient = PhobriWebSocketClient(pairingManager)
         smsReader = SmsReader(this)
         callLogReader = CallLogReader(this)
     }
@@ -118,6 +118,16 @@ class SyncForegroundService : Service() {
                     wsClient.connect(url, token)
 
                     if (wsClient.connectionState.value) {
+                        // Perform challenge-response to verify server knows the password
+                        val authOk = wsClient.performChallengeResponse()
+                        if (!authOk) {
+                            Log.w(TAG, "Challenge-response failed — server may not have the correct password")
+                            wsClient.disconnect()
+                            updateNotification("Authentication failed — check server password")
+                            delay(30_000) // Longer delay on auth failure
+                            continue
+                        }
+
                         updateNotification("Connected to desktop")
                         performInitialSync()
                     }

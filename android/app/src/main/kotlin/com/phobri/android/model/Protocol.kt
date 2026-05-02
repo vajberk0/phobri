@@ -64,3 +64,20 @@ data class SyncRequest(
 data class PingPayload(
     val timestamp: Long
 )
+
+/**
+ * Payload for auth.challenge request (phone → desktop).
+ */
+@Serializable
+data class AuthChallengePayload(
+    val nonce: String,
+    val ts: Long
+)
+
+/**
+ * Payload for auth.challenge response (desktop → phone).
+ */
+@Serializable
+data class AuthChallengeResponsePayload(
+    val hmac: String
+)

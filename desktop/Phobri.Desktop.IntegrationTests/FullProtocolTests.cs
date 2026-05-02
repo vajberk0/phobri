@@ -20,6 +20,8 @@ public sealed class FullProtocolTests : IAsyncLifetime
     private ServiceProvider _services = null!;
     private SyncServer _server = null!;
     private IPairingService _pairing = null!;
+    private IPasswordManagerService _passwordManager = null!;
+    private IDataService _dataService = null!;
     private string _pairingToken = null!;
     private string _certFingerprint = null!;
     private int _port;
@@ -38,11 +40,21 @@ public sealed class FullProtocolTests : IAsyncLifetime
         var configManager = new ConfigurationManager(testDir);
         services.AddSingleton(configManager);
 
+        // Password manager with a test password
+        var passwordManager = new PasswordManagerService(configManager);
+        services.AddSingleton<IPasswordManagerService>(passwordManager);
+
+        // Set up password (first-time setup)
+        passwordManager.SetupPassword("integration-test-password");
+
         var dataService = new DataService(Path.Combine(testDir, "data.db"));
-        await dataService.InitializeAsync();
         services.AddSingleton<IDataService>(dataService);
 
-        var pairingService = new PairingService(configManager);
+        // Unlock the database
+        var dek = passwordManager.DataEncryptionKey!;
+        await dataService.UnlockAsync(dek);
+
+        var pairingService = new PairingService(configManager, passwordManager);
         services.AddSingleton<IPairingService>(pairingService);
 
         services.AddSingleton<IWebSocketHandler, WebSocketHandler>();
@@ -51,11 +63,14 @@ public sealed class FullProtocolTests : IAsyncLifetime
             port: _port,
             wsHandler: sp.GetRequiredService<IWebSocketHandler>(),
             pairingService: sp.GetRequiredService<IPairingService>(),
-            dataService: sp.GetRequiredService<IDataService>()));
+            dataService: sp.GetRequiredService<IDataService>(),
+            passwordManager: sp.GetRequiredService<IPasswordManagerService>()));
 
         _services = services.BuildServiceProvider();
         _server = _services.GetRequiredService<SyncServer>();
         _pairing = _services.GetRequiredService<IPairingService>();
+        _passwordManager = _services.GetRequiredService<IPasswordManagerService>();
+        _dataService = _services.GetRequiredService<IDataService>();
         _pairingToken = _pairing.GeneratePairingToken();
         _pairing.ConfirmPairing(_pairingToken);
         _certFingerprint = _pairing.CertificateFingerprint;

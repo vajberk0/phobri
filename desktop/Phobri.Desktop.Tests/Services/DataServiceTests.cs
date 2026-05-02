@@ -1,32 +1,44 @@
 using Xunit;
 using Phobri.Desktop.Services;
 using Phobri.Desktop.Models;
-using Phobri.Desktop.Services;
+using Phobri.Desktop.Infrastructure;
 
 namespace Phobri.Desktop.Tests.Services;
 
+/// <summary>
+/// Tests for DataService with encrypted storage.
+/// Database must be unlocked with a DEK before operations.
+/// </summary>
 public sealed class DataServiceTests : IDisposable
 {
     private readonly string _dbPath;
     private readonly DataService _service;
+    private readonly byte[] _testDek;
 
     public DataServiceTests()
     {
         _dbPath = Path.Combine(Path.GetTempPath(), $"phobri-test-{Guid.NewGuid():N}.db");
+        _testDek = CryptoService.GenerateKey();
         _service = new DataService(_dbPath);
     }
 
-    [Fact]
-    public async Task Initialize_CreatesTables()
+    private async Task UnlockAsync()
     {
-        await _service.InitializeAsync();
-        Assert.True(File.Exists(_dbPath));
+        await _service.UnlockAsync(_testDek);
+    }
+
+    [Fact]
+    public async Task Unlock_CreatesAndDecryptsDatabase()
+    {
+        await UnlockAsync();
+        Assert.True(_service.IsOpen);
     }
 
     [Fact]
     public async Task UpsertSms_InsertsMessage()
     {
-        await _service.InitializeAsync();
+        await UnlockAsync();
+
         var msg = new SmsMessage
         {
             Id = 1,
@@ -49,7 +61,8 @@ public sealed class DataServiceTests : IDisposable
     [Fact]
     public async Task UpsertSms_UpdatesExistingMessage()
     {
-        await _service.InitializeAsync();
+        await UnlockAsync();
+
         var msg = new SmsMessage
         {
             Id = 1,
@@ -76,7 +89,8 @@ public sealed class DataServiceTests : IDisposable
     [Fact]
     public async Task UpsertSmsBatch_InsertsMultiple()
     {
-        await _service.InitializeAsync();
+        await UnlockAsync();
+
         var messages = new List<SmsMessage>
         {
             new() { Id = 1, Address = "+1", Body = "A", Date = 1000, Type = SmsType.Inbox, Read = true },
@@ -94,7 +108,8 @@ public sealed class DataServiceTests : IDisposable
     [Fact]
     public async Task GetSmsMessages_WithAfterFilter()
     {
-        await _service.InitializeAsync();
+        await UnlockAsync();
+
         var messages = new List<SmsMessage>
         {
             new() { Id = 1, Address = "+1", Body = "Old", Date = 1000, Type = SmsType.Inbox, Read = true },
@@ -111,7 +126,8 @@ public sealed class DataServiceTests : IDisposable
     [Fact]
     public async Task GetConversation_FiltersByAddress()
     {
-        await _service.InitializeAsync();
+        await UnlockAsync();
+
         var messages = new List<SmsMessage>
         {
             new() { Id = 1, Address = "+Alice", Body = "Hello", Date = 1000, Type = SmsType.Inbox, Read = true },
@@ -129,7 +145,8 @@ public sealed class DataServiceTests : IDisposable
     [Fact]
     public async Task UpsertCall_InsertsEntry()
     {
-        await _service.InitializeAsync();
+        await UnlockAsync();
+
         var call = new CallLogEntry
         {
             Id = 1,
@@ -150,7 +167,7 @@ public sealed class DataServiceTests : IDisposable
     [Fact]
     public async Task SyncState_TracksTimestamp()
     {
-        await _service.InitializeAsync();
+        await UnlockAsync();
 
         var initial = await _service.GetLastSyncTimestampAsync("sms");
         Assert.Equal(0, initial);
@@ -158,6 +175,45 @@ public sealed class DataServiceTests : IDisposable
         await _service.SetLastSyncTimestampAsync("sms", 1714608000000);
         var updated = await _service.GetLastSyncTimestampAsync("sms");
         Assert.Equal(1714608000000, updated);
+    }
+
+    [Fact]
+    public async Task LockAndUnlock_PreservesData()
+    {
+        await UnlockAsync();
+
+        // Insert some data
+        var msg = new SmsMessage
+        {
+            Id = 1,
+            Address = "+123",
+            Body = "Test lock/unlock",
+            Date = 1000,
+            Type = SmsType.Inbox,
+            Read = true
+        };
+        await _service.UpsertSmsAsync(msg);
+
+        // Lock
+        await _service.LockAsync(_testDek);
+        Assert.False(_service.IsOpen);
+
+        // Unlock again
+        await _service.UnlockAsync(_testDek);
+        Assert.True(_service.IsOpen);
+
+        // Data should still be there
+        var messages = await _service.GetSmsMessagesAsync();
+        Assert.Single(messages);
+        Assert.Equal("Test lock/unlock", messages[0].Body);
+    }
+
+    [Fact]
+    public async Task OperationsWithoutUnlock_ThrowsException()
+    {
+        // Don't unlock
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await _service.GetSmsMessagesAsync());
     }
 
     public void Dispose()

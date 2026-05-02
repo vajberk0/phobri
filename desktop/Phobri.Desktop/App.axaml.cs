@@ -45,12 +45,16 @@ public partial class App : Application
         var configManager = new ConfigurationManager(configDir);
         services.AddSingleton(configManager);
 
+        // --- Password Manager ---
+        var passwordManager = new PasswordManagerService(configManager);
+        services.AddSingleton<IPasswordManagerService>(passwordManager);
+
         // --- Data ---
         var dataService = new DataService(Path.Combine(configDir, "data.db"));
         services.AddSingleton<IDataService>(dataService);
 
         // --- Pairing ---
-        var pairingService = new PairingService(configManager);
+        var pairingService = new PairingService(configManager, passwordManager);
         services.AddSingleton<IPairingService>(pairingService);
 
         // --- Networking ---
@@ -69,7 +73,8 @@ public partial class App : Application
                 port: 8765,
                 wsHandler: sp.GetRequiredService<IWebSocketHandler>(),
                 pairingService: sp.GetRequiredService<IPairingService>(),
-                dataService: sp.GetRequiredService<IDataService>());
+                dataService: sp.GetRequiredService<IDataService>(),
+                passwordManager: sp.GetRequiredService<IPasswordManagerService>());
         });
 
         // --- ViewModels ---

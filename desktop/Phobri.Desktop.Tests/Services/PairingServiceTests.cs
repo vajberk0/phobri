@@ -1,37 +1,45 @@
 using Xunit;
 using Phobri.Desktop.Services;
 using Phobri.Desktop.Infrastructure;
-using Phobri.Desktop.Services;
 
 namespace Phobri.Desktop.Tests.Services;
 
+/// <summary>
+/// Tests for PairingService with encrypted token storage via PasswordManagerService.
+/// </summary>
 public sealed class PairingServiceTests : IDisposable
 {
     private readonly string _testDir;
+    private readonly ConfigurationManager _config;
+    private readonly IPasswordManagerService _passwordManager;
+    private readonly IPairingService _service;
 
     public PairingServiceTests()
     {
         _testDir = Path.Combine(Path.GetTempPath(), "phobri-test-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(_testDir);
+
+        _config = new ConfigurationManager(_testDir);
+        _passwordManager = new PasswordManagerService(_config);
+
+        // Set up password so we have a DEK and can store pairing token encrypted
+        _passwordManager.SetupPassword("test-password-123");
+        Assert.True(_passwordManager.IsUnlocked);
+
+        _service = new PairingService(_config, _passwordManager);
     }
 
     [Fact]
-    public void NewService_IsNotPaired()
+    public void NewService_IsNotPaired_WhenNoToken()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        Assert.False(service.IsPaired);
-        Assert.Null(service.PairingToken);
+        Assert.False(_service.IsPaired);
+        Assert.Null(_service.PairingToken);
     }
 
     [Fact]
     public void GeneratePairingToken_Returns64CharHex()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        var token = service.GeneratePairingToken();
+        var token = _service.GeneratePairingToken();
 
         Assert.NotNull(token);
         Assert.Equal(64, token.Length);
@@ -42,96 +50,72 @@ public sealed class PairingServiceTests : IDisposable
     [Fact]
     public void GeneratePairingToken_DoesNotSetPaired()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        service.GeneratePairingToken();
+        _service.GeneratePairingToken();
 
         // Generating a token does not pair - confirmation is separate
-        Assert.False(service.IsPaired);
+        Assert.False(_service.IsPaired);
     }
 
     [Fact]
     public void ConfirmPairing_SetsPairedState()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        var token = service.GeneratePairingToken();
-        var result = service.ConfirmPairing(token);
+        var token = _service.GeneratePairingToken();
+        var result = _service.ConfirmPairing(token);
 
         Assert.True(result);
-        Assert.True(service.IsPaired);
-        Assert.Equal(token, service.PairingToken);
+        Assert.True(_service.IsPaired);
+        Assert.Equal(token, _service.PairingToken);
     }
 
     [Fact]
     public void ConfirmPairing_RejectsInvalidToken()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        var result = service.ConfirmPairing("not-valid-hex-64");
+        var result = _service.ConfirmPairing("not-valid-hex-64");
 
         Assert.False(result);
-        Assert.False(service.IsPaired);
+        Assert.False(_service.IsPaired);
     }
 
     [Fact]
     public void ValidateToken_ReturnsTrue_ForCorrectToken()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
+        var token = _service.GeneratePairingToken();
+        _service.ConfirmPairing(token);
 
-        var token = service.GeneratePairingToken();
-        service.ConfirmPairing(token);
-
-        Assert.True(service.ValidateToken(token));
+        Assert.True(_service.ValidateToken(token));
     }
 
     [Fact]
     public void ValidateToken_ReturnsFalse_ForWrongToken()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
+        var token = _service.GeneratePairingToken();
+        _service.ConfirmPairing(token);
 
-        var token = service.GeneratePairingToken();
-        service.ConfirmPairing(token);
-
-        Assert.False(service.ValidateToken("wrong-token"));
+        Assert.False(_service.ValidateToken("wrong-token"));
     }
 
     [Fact]
     public void ValidateToken_ReturnsFalse_WhenNotPaired()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        Assert.False(service.ValidateToken("any-token"));
+        Assert.False(_service.ValidateToken("any-token"));
     }
 
     [Fact]
     public void Unpair_ClearsState()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
+        var token = _service.GeneratePairingToken();
+        _service.ConfirmPairing(token);
+        Assert.True(_service.IsPaired);
 
-        var token = service.GeneratePairingToken();
-        service.ConfirmPairing(token);
-        Assert.True(service.IsPaired);
-
-        service.Unpair();
-        Assert.False(service.IsPaired);
-        Assert.Null(service.PairingToken);
+        _service.Unpair();
+        Assert.False(_service.IsPaired);
+        Assert.Null(_service.PairingToken);
     }
 
     [Fact]
     public void Certificate_HasCorrectProperties()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        var cert = service.Certificate;
+        var cert = _service.Certificate;
         Assert.NotNull(cert);
         Assert.True(cert.HasPrivateKey);
     }
@@ -139,27 +123,57 @@ public sealed class PairingServiceTests : IDisposable
     [Fact]
     public void CertificateFingerprint_Is64Chars()
     {
-        var config = new ConfigurationManager(_testDir);
-        var service = new PairingService(config);
-
-        var fp = service.CertificateFingerprint;
+        var fp = _service.CertificateFingerprint;
         Assert.Equal(64, fp.Length);
     }
 
     [Fact]
     public void Pairing_PersistsAcrossInstances()
     {
-        var config1 = new ConfigurationManager(_testDir);
-        var service1 = new PairingService(config1);
-        var token = service1.GeneratePairingToken();
-        service1.ConfirmPairing(token);
+        var token = _service.GeneratePairingToken();
+        _service.ConfirmPairing(token);
 
-        // Create a new service with the same config dir
-        var config2 = new ConfigurationManager(_testDir);
-        var service2 = new PairingService(config2);
+        // Create a new password manager (same config dir, unlock with same password)
+        var pm2 = new PasswordManagerService(_config);
+        pm2.Unlock("test-password-123");
+        Assert.True(pm2.IsUnlocked);
+
+        // Create a new pairing service with the unlocked password manager
+        var service2 = new PairingService(_config, pm2);
 
         Assert.True(service2.IsPaired);
         Assert.Equal(token, service2.PairingToken);
+    }
+
+    [Fact]
+    public void IsPaired_ReturnsFalse_WhenPasswordManagerLocked()
+    {
+        var token = _service.GeneratePairingToken();
+        _service.ConfirmPairing(token);
+        Assert.True(_service.IsPaired);
+
+        // Lock the password manager
+        _passwordManager.Lock();
+        Assert.False(_passwordManager.IsUnlocked);
+
+        // IsPaired should now return false since PairingToken comes from locked password manager
+        Assert.False(_service.IsPaired);
+        Assert.Null(_service.PairingToken);
+    }
+
+    [Fact]
+    public void ServerIdentityKey_Available_WhenUnlocked()
+    {
+        Assert.True(_passwordManager.IsUnlocked);
+        Assert.NotNull(_service.ServerIdentityKey);
+        Assert.Equal(32, _service.ServerIdentityKey!.Length);
+    }
+
+    [Fact]
+    public void ServerIdentityKey_Null_WhenLocked()
+    {
+        _passwordManager.Lock();
+        Assert.Null(_service.ServerIdentityKey);
     }
 
     public void Dispose()
