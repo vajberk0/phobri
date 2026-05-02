@@ -8,7 +8,7 @@ between the Android client and the Desktop server.
 - **Protocol:** WebSocket over TLS 1.3 (WSS)
 - **Server:** Desktop (Avalonia + Kestrel), listens on port 8765
 - **Client:** Android (Ktor client), connects to desktop
-- **Authentication:** Pairing token sent as initial WebSocket message or HTTP header `X-Phobri-Token`
+- **Authentication:** REST endpoints use `X-Phobri-Token` header. WebSocket uses the first message (`pair.init`) for authentication; no HTTP header required for WS upgrade.
 - **Certificate:** Self-signed X.509 certificate, TOFU (Trust on First Use)
 
 ## 2. REST API (HTTP/1.1)
@@ -72,7 +72,9 @@ Get call log entries. Query params: `after` (epoch millis), `limit` (default 100
 
 ## 3. WebSocket Protocol
 
-All messages are JSON with this structure:
+All messages are JSON with this structure. **Enum values use lowercase** (e.g., `"type": "request"`, not `"REQUEST"`). The server uses `System.Text.Json` with `JsonSerializerDefaults.Web` (camelCase, case-insensitive). The Android client uses `kotlinx.serialization` with `@SerialName` annotations for lowercase enum matching.
+
+**Message size:** Keep individual messages under ~100KB. For batch sync, limit to 50 items per message to avoid frame fragmentation issues.
 
 ```json
 {

@@ -107,21 +107,22 @@ All messages are JSON with a type discriminator:
 | Action | Description |
 |--------|-------------|
 | `sms.new` | New SMS received on phone |
-| `sms.sync` | Batch SMS sync response |
+| `sms.sync` | Batch SMS sync (limit 50 per message) |
 | `call.new` | New call log entry |
-| `call.sync` | Batch call log sync response |
-| `pair.init` | Initial pairing request |
+| `call.sync` | Batch call log sync (limit 50 per message) |
+| `pair.init` | Initial pairing request (first WS message; not HTTP header) |
+| `auth.challenge` | Challenge-response authentication (nonce + timestamp) |
 | `ping` | Keep-alive |
 
-**Desktop → Android (server requests):**
+**Desktop → Android (server responses/requests):**
 
 | Action | Description |
 |--------|-------------|
+| `pair.confirmed` | Pairing accepted |
+| `auth.challenge` | Challenge-response HMAC answer |
 | `sms.sync.request` | Request full/incremental SMS sync |
 | `call.sync.request` | Request full/incremental call log sync |
 | `sms.send` | Request to send an SMS |
-| `pair.challenge` | Pairing challenge |
-| `fcm.token.request` | Request FCM token |
 | `pong` | Keep-alive response |
 
 ---
