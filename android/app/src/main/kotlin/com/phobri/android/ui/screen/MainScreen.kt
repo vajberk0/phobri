@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -380,6 +382,65 @@ fun MainScreen(
                         label = { Text("Port") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
+                    )
+                }
+            }
+
+            // ── Sync Settings ──
+            var syncSms by remember { mutableStateOf(pairingManager.syncSmsEnabled) }
+            var syncCalls by remember { mutableStateOf(pairingManager.syncCallsEnabled) }
+            var maxEntries by remember { mutableStateOf(pairingManager.maxSyncEntries.toString()) }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Sync Settings", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = syncSms,
+                            onCheckedChange = {
+                                syncSms = it
+                                pairingManager.syncSmsEnabled = it
+                            }
+                        )
+                        Text("Sync SMS messages", style = MaterialTheme.typography.bodyLarge)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = syncCalls,
+                            onCheckedChange = {
+                                syncCalls = it
+                                pairingManager.syncCallsEnabled = it
+                            }
+                        )
+                        Text("Sync call logs", style = MaterialTheme.typography.bodyLarge)
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = maxEntries,
+                        onValueChange = { newVal ->
+                            maxEntries = newVal
+                            val parsed = newVal.toIntOrNull()
+                            if (parsed != null && parsed > 0) {
+                                pairingManager.maxSyncEntries = parsed
+                            }
+                        },
+                        label = { Text("Max entries to send") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        supportingText = {
+                            Text("Limits how many SMS/calls are sent per initial sync")
+                        }
                     )
                 }
             }

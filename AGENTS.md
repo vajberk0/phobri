@@ -232,7 +232,7 @@ cd android && ./gradlew test && cd ../desktop/Phobri.Desktop.Tests && dotnet tes
 - `sync/CallLogReader.kt` — ContentResolver call log reader
 - `sync/SmsObserver.kt` — ContentObserver for real-time SMS
 - `sync/CallObserver.kt` — PhoneStateListener for calls
-- `pairing/PairingManager.kt` — TOFU pairing + cert pinning + SIK storage
+- `pairing/PairingManager.kt` — TOFU pairing + cert pinning + SIK storage + sync config (SMS/calls toggles, max entries)
 - `model/SmsMessage.kt` — SMS and CallLog data models
 - `model/Protocol.kt` — Protocol messages including AuthChallenge
 - `network/IpDetector.kt` — Local IP detection

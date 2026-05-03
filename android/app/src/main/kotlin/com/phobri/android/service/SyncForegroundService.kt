@@ -198,18 +198,27 @@ class SyncForegroundService : Service() {
 
     private suspend fun performInitialSync() {
         val client = wsClient ?: return
+        val maxEntries = pairingManager.maxSyncEntries
 
         // Sync only recent messages to keep frames small and fast
-        val smsMessages = smsReader.readRecentMessages(50)
-        if (smsMessages.isNotEmpty()) {
-            client.sendSmsSync(smsMessages)
-            Log.d(TAG, "Synced ${smsMessages.size} SMS messages")
+        if (pairingManager.syncSmsEnabled) {
+            val smsMessages = smsReader.readRecentMessages(maxEntries)
+            if (smsMessages.isNotEmpty()) {
+                client.sendSmsSync(smsMessages)
+                Log.d(TAG, "Synced ${smsMessages.size} SMS messages")
+            }
+        } else {
+            Log.d(TAG, "SMS sync disabled — skipping")
         }
 
-        val calls = callLogReader.readRecentCalls(50)
-        if (calls.isNotEmpty()) {
-            client.sendCallSync(calls)
-            Log.d(TAG, "Synced ${calls.size} call log entries")
+        if (pairingManager.syncCallsEnabled) {
+            val calls = callLogReader.readRecentCalls(maxEntries)
+            if (calls.isNotEmpty()) {
+                client.sendCallSync(calls)
+                Log.d(TAG, "Synced ${calls.size} call log entries")
+            }
+        } else {
+            Log.d(TAG, "Call log sync disabled — skipping")
         }
 
         launchIncomingMessageHandler()
@@ -218,25 +227,29 @@ class SyncForegroundService : Service() {
     private fun setupObservers() {
         val client = wsClient ?: return
 
-        smsObserver = SmsObserver(this) {
-            serviceScope.launch {
-                if (client.connectionState.value) {
-                    val latest = smsReader.readRecentMessages(1)
-                    latest.firstOrNull()?.let { sms ->
-                        client.pushNewSms(sms)
+        if (pairingManager.syncSmsEnabled) {
+            smsObserver = SmsObserver(this) {
+                serviceScope.launch {
+                    if (client.connectionState.value) {
+                        val latest = smsReader.readRecentMessages(1)
+                        latest.firstOrNull()?.let { sms ->
+                            client.pushNewSms(sms)
+                        }
                     }
                 }
             }
+            smsObserver?.start()
         }
-        smsObserver?.start()
 
-        callObserver = CallObserver(this)
-        callObserver?.start {
-            serviceScope.launch {
-                if (client.connectionState.value) {
-                    val latest = callLogReader.readRecentCalls(1)
-                    latest.firstOrNull()?.let { call ->
-                        client.pushNewCall(call)
+        if (pairingManager.syncCallsEnabled) {
+            callObserver = CallObserver(this)
+            callObserver?.start {
+                serviceScope.launch {
+                    if (client.connectionState.value) {
+                        val latest = callLogReader.readRecentCalls(1)
+                        latest.firstOrNull()?.let { call ->
+                            client.pushNewCall(call)
+                        }
                     }
                 }
             }
@@ -290,14 +303,24 @@ class SyncForegroundService : Service() {
     private suspend fun handleRequest(message: ProtocolMessage, client: PhobriWebSocketClient) {
         when (message.action) {
             "sms.sync.request" -> {
+                if (!pairingManager.syncSmsEnabled) {
+                    Log.d(TAG, "SMS sync disabled — ignoring sms.sync.request")
+                    return
+                }
                 val after = message.payload?.jsonObject?.get("after")?.jsonPrimitive?.longOrNull
-                val limit = message.payload?.jsonObject?.get("limit")?.jsonPrimitive?.intOrNull ?: 100
+                val limit = message.payload?.jsonObject?.get("limit")?.jsonPrimitive?.intOrNull
+                    ?: pairingManager.maxSyncEntries
                 val messages = smsReader.readMessages(after = after, limit = limit)
                 client.sendSmsSync(messages)
             }
             "call.sync.request" -> {
+                if (!pairingManager.syncCallsEnabled) {
+                    Log.d(TAG, "Call log sync disabled — ignoring call.sync.request")
+                    return
+                }
                 val after = message.payload?.jsonObject?.get("after")?.jsonPrimitive?.longOrNull
-                val limit = message.payload?.jsonObject?.get("limit")?.jsonPrimitive?.intOrNull ?: 100
+                val limit = message.payload?.jsonObject?.get("limit")?.jsonPrimitive?.intOrNull
+                    ?: pairingManager.maxSyncEntries
                 val calls = callLogReader.readCallLog(after = after, limit = limit)
                 client.sendCallSync(calls)
             }

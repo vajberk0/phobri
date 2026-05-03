@@ -187,7 +187,7 @@ All messages are JSON with a type discriminator:
 | `CallObserver` | `PhoneStateListener` for call state changes |
 | `WebSocketClient` | Ktor WebSocket client with auto-reconnect |
 | `UdpWakeListener` | `DatagramSocket` listener on port 9876 |
-| `PairingManager` | TOFU cert pinning + pairing token storage |
+| `PairingManager` | TOFU cert pinning + pairing token storage + sync config (SMS/calls toggles, max entries) |
 | `FcmReceiver` | `FirebaseMessagingService` for FCM wake (optional) |
 
 ### 4.3 Permissions

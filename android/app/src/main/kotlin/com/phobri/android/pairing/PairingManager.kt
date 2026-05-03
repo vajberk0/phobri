@@ -29,6 +29,9 @@ class PairingManager(context: Context) {
         private const val KEY_DESKTOP_HOST = "desktop_host"
         private const val KEY_DESKTOP_PORT = "desktop_port"
         private const val KEY_SERVER_IDENTITY_KEY = "server_identity_key"
+        private const val KEY_SYNC_SMS_ENABLED = "sync_sms_enabled"
+        private const val KEY_SYNC_CALLS_ENABLED = "sync_calls_enabled"
+        private const val KEY_MAX_SYNC_ENTRIES = "max_sync_entries"
 
         private fun createEncryptedPrefs(context: Context): SharedPreferences {
             return try {
@@ -68,6 +71,23 @@ class PairingManager(context: Context) {
 
     /** Last known desktop port. */
     val desktopPort: Int get() = prefs.getInt(KEY_DESKTOP_PORT, 8765)
+
+    // --- Sync settings ---
+
+    /** Whether SMS sync is enabled. */
+    var syncSmsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SYNC_SMS_ENABLED, true)
+        set(value) { prefs.edit().putBoolean(KEY_SYNC_SMS_ENABLED, value).apply() }
+
+    /** Whether call log sync is enabled. */
+    var syncCallsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SYNC_CALLS_ENABLED, true)
+        set(value) { prefs.edit().putBoolean(KEY_SYNC_CALLS_ENABLED, value).apply() }
+
+    /** Maximum number of entries to send per initial sync. */
+    var maxSyncEntries: Int
+        get() = prefs.getInt(KEY_MAX_SYNC_ENTRIES, 50)
+        set(value) { prefs.edit().putInt(KEY_MAX_SYNC_ENTRIES, value).apply() }
 
     /**
      * Store pairing information.

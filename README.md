@@ -8,6 +8,7 @@ Cross-device SMS and call log synchronization between Android and Desktop.
 
 - 📨 **SMS Sync** — Read and view SMS messages from your phone on your desktop
 - 📞 **Call Log Sync** — View incoming, outgoing, and missed calls
+- ⚙️ **Configurable Sync** — Toggle SMS/call log sync independently, set max batch size
 - 🔄 **Real-time Push** — New SMS and calls appear instantly on desktop
 - 🔒 **Encrypted** — TLS 1.3 with certificate pinning (TOFU)
 - 🏠 **LAN & Remote** — Works on local Wi-Fi and over the internet (with port forwarding)
@@ -101,7 +102,8 @@ Press Ctrl+C to stop.
 3. Grant SMS, Call Log, and Phone permissions
 4. Enter the pairing token shown on the desktop
 5. Enter the desktop's IP address
-6. Tap "Start Sync"
+6. Configure sync: toggle SMS/call log sync and set max entries per batch
+7. Tap "Start Sync"
 
 ### Pairing Flow
 
