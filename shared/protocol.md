@@ -213,7 +213,33 @@ When locked:
 - All decrypted keys are cleared from memory
 - The database connection is closed
 
-## 6. UDP Wake Protocol
+## 6. QR Code Pairing Format
+
+For easy initial setup, the desktop generates a QR code containing all pairing
+information. The QR code encodes a URI with the following format:
+
+```
+phobri://pair?h=<host>&p=<port>&t=<token>&f=<fingerprint>
+```
+
+**Parameters:**
+
+| Param | Description |
+|-------|-------------|
+| `h`   | Desktop host (IPv4 address or hostname, URL-encoded) |
+| `p`   | Server port (integer, default 8765) |
+| `t`   | Pairing token (64-char lowercase hex) |
+| `f`   | TLS certificate SHA-256 fingerprint (64-char lowercase hex) |
+
+**Example:**
+```
+phobri://pair?h=192.168.1.5&p=8765&t=a1b2c3d4e5f6...&f=01ab23cd45ef67...
+```
+
+When scanned by the Android app, all fields are auto-filled, and the fingerprint
+is used directly without needing an initial `/api/v1/ping` round-trip.
+
+## 7. UDP Wake Protocol
 
 Desktop sends a UDP datagram containing the ASCII string `"WAKE"` to the
 Android device on port 9876. This signals the Android app to initiate a
@@ -221,7 +247,7 @@ WebSocket connection.
 
 **Packet:** 4 bytes: `0x57 0x41 0x4B 0x45` ("WAKE")
 
-## 7. External IP Detection
+## 8. External IP Detection
 
 Desktop fetches external IP from `http://ip.ie.mk/get` and makes it available
 to the Android client for off-LAN connectivity.

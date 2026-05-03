@@ -132,6 +132,18 @@ sealed class Program
         {
             var token = pairingService.GeneratePairingToken();
             Console.WriteLine($"  Pairing token: {token}");
+
+            // Show a QR-code-scannable URI with local addresses
+            var fingerprint = pairingService.CertificateFingerprint;
+            var addresses = pairingService.GetLocalAddresses();
+            if (addresses.Count > 0)
+            {
+                var host = addresses[0];
+                var qrUri = $"phobri://pair?h={Uri.EscapeDataString(host)}&p={port}&t={token}&f={fingerprint}";
+                Console.WriteLine($"  QR Code URI:  {qrUri}");
+                Console.WriteLine($"  Local IPs:    {string.Join(", ", addresses)}");
+            }
+
             Console.WriteLine($"  (automatically confirmed on first Android connection)");
             Console.WriteLine();
         }

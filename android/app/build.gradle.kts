@@ -84,6 +84,9 @@ dependencies {
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // QR Code Scanning (ZXing)
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("androidx.test:core:1.6.1")

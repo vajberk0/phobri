@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Phobri.Desktop.ViewModels"
         xmlns:models="using:Phobri.Desktop.Models"
+        xmlns:infra="using:Phobri.Desktop.Infrastructure"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
@@ -14,6 +15,10 @@
     <Design.DataContext>
         <vm:MainWindowViewModel/>
     </Design.DataContext>
+
+    <Window.Resources>
+        <infra:ByteArrayToBitmapConverter x:Key="ByteToBitmapConverter" />
+    </Window.Resources>
 
     <DockPanel>
         <!-- Status Bar (Bottom) -->
@@ -198,13 +203,42 @@
                                 Padding="12" CornerRadius="6">
                             <StackPanel Spacing="8">
                                 <TextBlock Text="Device Pairing" FontWeight="Bold" FontSize="14" />
+
+                                <!-- Generate Token + Show QR -->
                                 <Button Command="{Binding PairingViewModel.GeneratePairTokenCommand}"
                                         Content="Generate Pairing Token"
                                         IsEnabled="{Binding IsServerRunning}" />
+
+                                <!-- QR Code Image (auto-hidden by Avalonia when Source is null) -->
+                                <Image Source="{Binding PairingViewModel.QrCodePng,
+                                    Converter={StaticResource ByteToBitmapConverter}}"
+                                       Width="240" Height="240"
+                                       HorizontalAlignment="Center" />
+
+                                <!-- Local address selector -->
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="Local Address:" FontSize="11" />
+                                    <ComboBox ItemsSource="{Binding PairingViewModel.LocalAddresses}"
+                                              SelectedItem="{Binding PairingViewModel.SelectedLocalAddress}"
+                                              HorizontalAlignment="Stretch" />
+                                </StackPanel>
+
+                                <!-- QR Code URI (click to copy) -->
+                                <TextBox Text="{Binding PairingViewModel.QrCodeUri}"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         FontSize="10"
+                                         FontFamily="Courier New" />
+
+                                <!-- Token text (as fallback) -->
                                 <TextBlock Text="{Binding PairingViewModel.PairingToken}"
-                                           TextWrapping="Wrap" />
+                                           TextWrapping="Wrap"
+                                           FontSize="11"
+                                           FontFamily="Courier New" />
+
                                 <TextBlock Text="{Binding PairingViewModel.Fingerprint}"
                                            FontSize="11" FontFamily="Courier New" />
+
                                 <Button Command="{Binding PairingViewModel.UnpairCommand}"
                                         Content="Unpair Device"
                                         IsEnabled="{Binding PairingViewModel.IsPaired}" />

@@ -1,6 +1,9 @@
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Phobri.Desktop.Infrastructure;
+using QRCoder;
 
 namespace Phobri.Desktop.Services;
 
@@ -40,6 +43,12 @@ public interface IPairingService
 
     /// <summary>Check if a provided token matches the stored or pending pairing token.</summary>
     bool ValidateToken(string token);
+
+    /// <summary>Get local network IP addresses (non-loopback IPv4 and IPv6).</summary>
+    IReadOnlyList<string> GetLocalAddresses();
+
+    /// <summary>Generate QR code PNG bytes for the pairing info using the given host and port.</summary>
+    byte[]? GenerateQrCode(string host, int port);
 }
 
 public sealed class PairingService : IPairingService
@@ -84,10 +93,91 @@ public sealed class PairingService : IPairingService
     /// <inheritdoc/>
     public string GeneratePairingToken()
     {
+        // Reuse existing pending token if there is one
+        if (_pendingToken is not null)
+            return _pendingToken;
+
         var bytes = RandomNumberGenerator.GetBytes(32);
         var token = Convert.ToHexStringLower(bytes);
         _pendingToken = token;
         return token;
+    }
+
+    /// <inheritdoc/>
+    public IReadOnlyList<string> GetLocalAddresses()
+    {
+        var addresses = new List<string>();
+        try
+        {
+            foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.OperationalStatus != OperationalStatus.Up)
+                    continue;
+
+                // Skip loopback and tunnel interfaces
+                if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback ||
+                    ni.NetworkInterfaceType == NetworkInterfaceType.Tunnel)
+                    continue;
+
+                foreach (var addr in ni.GetIPProperties().UnicastAddresses)
+                {
+                    if (addr.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    {
+                        addresses.Add(addr.Address.ToString());
+                    }
+                }
+            }
+        }
+        catch { /* Best-effort */ }
+
+        // Sort: private ranges first, then others
+        addresses.Sort((a, b) =>
+        {
+            bool aPrivate = IsPrivateIp(a);
+            bool bPrivate = IsPrivateIp(b);
+            if (aPrivate && !bPrivate) return -1;
+            if (!aPrivate && bPrivate) return 1;
+            return string.CompareOrdinal(a, b);
+        });
+
+        return addresses;
+    }
+
+    /// <inheritdoc/>
+    public byte[]? GenerateQrCode(string host, int port)
+    {
+        if (_pendingToken is null)
+            return null;
+
+        try
+        {
+            // Format: phobri://pair?h=<host>&p=<port>&t=<token>&f=<fingerprint>
+            var fingerprint = CertificateFingerprint;
+            var uri = $"phobri://pair?h={Uri.EscapeDataString(host)}&p={port}&t={_pendingToken}&f={fingerprint}";
+            return PngByteQRCodeHelper.GetQRCode(uri, QRCodeGenerator.ECCLevel.M, 10);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsPrivateIp(string ip)
+    {
+        if (!IPAddress.TryParse(ip, out var addr))
+            return false;
+
+        byte[] bytes = addr.GetAddressBytes();
+        if (bytes.Length != 4) return false;
+
+        // 10.0.0.0/8
+        if (bytes[0] == 10) return true;
+        // 172.16.0.0/12
+        if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
+        // 192.168.0.0/16
+        if (bytes[0] == 192 && bytes[1] == 168) return true;
+
+        return false;
     }
 
     /// <inheritdoc/>

@@ -15,9 +15,13 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.phobri.android.service.SyncForegroundService
 import com.phobri.android.ui.screen.MainScreen
+import com.phobri.android.ui.screen.QrPairingData
 import com.phobri.android.ui.theme.PhobriTheme
 
 class MainActivity : ComponentActivity() {
+
+    // Holds pairing data from a phobri:// deep link (set before compose renders)
+    private var deepLinkPairingData: QrPairingData? = null
 
     private val requiredPermissions = mutableListOf(
         Manifest.permission.READ_SMS,
@@ -43,6 +47,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Parse phobri://pair deep link from intent (e.g., scanned by external QR app)
+        handleDeepLink(intent)
+
         // Request permissions on first launch
         if (!hasRequiredPermissions()) {
             permissionLauncher.launch(requiredPermissions.toTypedArray())
@@ -63,10 +70,28 @@ class MainActivity : ComponentActivity() {
                         },
                         onPermissionsRequested = {
                             permissionLauncher.launch(requiredPermissions.toTypedArray())
-                        }
+                        },
+                        initialDeepLinkData = deepLinkPairingData
                     )
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    /**
+     * Parse a phobri://pair deep link from an intent.
+     * Stores the result for the composable to pick up.
+     */
+    private fun handleDeepLink(intent: Intent?) {
+        val uri = intent?.data?.toString() ?: return
+        val data = QrPairingData.parse(uri)
+        if (data != null) {
+            deepLinkPairingData = data
         }
     }
 

@@ -100,18 +100,20 @@ Press Ctrl+C to stop.
 1. Open `android/` in Android Studio
 2. Build and install on your device
 3. Grant SMS, Call Log, and Phone permissions
-4. Enter the pairing token shown on the desktop
-5. Enter the desktop's IP address
+4. **Option A (recommended):** Tap "Scan QR Code" and scan the QR code shown on desktop
+   → all pairing fields are auto-filled
+5. **Option B:** Manually enter the pairing token and desktop IP address shown on desktop
 6. Configure sync: toggle SMS/call log sync and set max entries per batch
 7. Tap "Start Sync"
 
 ### Pairing Flow
 
-1. Desktop generates a pairing token
-2. Enter the token on the Android app
-3. Android connects via WSS and authenticates with the token
-4. Android pins the desktop's TLS certificate fingerprint
-5. Subsequent connections verify the fingerprint
+1. Desktop generates a pairing token and displays it as a QR code + text
+2. **QR route:** Android scans the QR → host, port, token, and cert fingerprint auto-filled
+3. **Manual route:** Enter token + host + port manually on Android
+4. Android connects via WSS and authenticates with the token
+5. Android pins the desktop's TLS certificate fingerprint
+6. Subsequent connections verify the fingerprint
 
 ### Off-LAN Access
 

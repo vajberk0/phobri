@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -25,12 +27,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.phobri.android.BuildConfig
 import com.phobri.android.pairing.PairingManager
 import com.phobri.android.service.SyncForegroundService
 import com.phobri.android.sync.ClientEvent
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -40,7 +43,58 @@ import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
-import androidx.compose.runtime.rememberCoroutineScope
+
+/**
+ * Parsed pairing data from a QR code or deep link.
+ * Format: phobri://pair?h=<host>&p=<port>&t=<token>&f=<fingerprint>
+ */
+data class QrPairingData(
+    val host: String,
+    val port: Int,
+    val token: String,
+    val fingerprint: String
+) {
+    companion object {
+        /**
+         * Parse a phobri://pair URI into pairing data.
+         * Returns null if the URI is invalid or missing required fields.
+         */
+        fun parse(uri: String): QrPairingData? {
+            // Support both "phobri://pair?..." and raw JSON (future-proof)
+            val trimmed = uri.trim()
+
+            // Try to parse as phobri://pair URI
+            if (trimmed.startsWith("phobri://pair", ignoreCase = true)) {
+                return try {
+                    val query = if (trimmed.contains("?")) {
+                        trimmed.substringAfter("?")
+                    } else {
+                        return null
+                    }
+                    val params = query.split("&").associate { part ->
+                        val (key, value) = part.split("=", limit = 2)
+                        key to java.net.URLDecoder.decode(value, "UTF-8")
+                    }
+
+                    val host = params["h"] ?: return null
+                    val port = params["p"]?.toIntOrNull() ?: 8765
+                    val token = params["t"] ?: return null
+                    val fingerprint = params["f"] ?: return null
+
+                    // Basic validation
+                    if (host.isBlank() || token.length != 64 || fingerprint.length != 64)
+                        return null
+
+                    QrPairingData(host, port, token, fingerprint)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            return null
+        }
+    }
+}
 
 /**
  * Main screen for the Android app.
@@ -51,7 +105,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 fun MainScreen(
     onStartSync: (host: String, port: Int) -> Unit,
     onStopSync: () -> Unit,
-    onPermissionsRequested: () -> Unit
+    onPermissionsRequested: () -> Unit,
+    initialDeepLinkData: QrPairingData? = null
 ) {
     val context = LocalContext.current
     val pairingManager = remember { PairingManager(context) }
@@ -62,7 +117,40 @@ fun MainScreen(
     var isPairing by remember { mutableStateOf(false) }
     var manualHost by remember { mutableStateOf(pairingManager.desktopHost ?: "") }
     var manualPort by remember { mutableStateOf(pairingManager.desktopPort.toString()) }
+    var showConnectionSettings by remember { mutableStateOf(false) }
+    var scannedFingerprint by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
+
+    // Process an initial deep link (e.g., from external QR scanner app)
+    LaunchedEffect(initialDeepLinkData) {
+        val data = initialDeepLinkData ?: return@LaunchedEffect
+        // Already paired? Skip
+        if (isPaired) return@LaunchedEffect
+        manualHost = data.host
+        manualPort = data.port.toString()
+        pairingCode = data.token
+        scannedFingerprint = data.fingerprint
+        pairingError = null
+    }
+
+    // QR Code Scanner
+    val qrScanLauncher = rememberLauncherForActivityResult(
+        contract = ScanContract()
+    ) { result ->
+        if (result.contents != null) {
+            val data = QrPairingData.parse(result.contents)
+            if (data != null) {
+                manualHost = data.host
+                manualPort = data.port.toString()
+                pairingCode = data.token
+                scannedFingerprint = data.fingerprint
+                pairingError = null
+            } else {
+                pairingError = "QR code is not a valid Phobri pairing code"
+            }
+        }
+        // If result.contents is null, the user cancelled — do nothing
+    }
 
     // Reactive permission check
     var permissionCheckTick by remember { mutableStateOf(0) }
@@ -100,7 +188,7 @@ fun MainScreen(
         val logItems = remember(eventLog) { eventLog.toList() }
         AlertDialog(
             onDismissRequest = { showLogDialog = false },
-            title = { 
+            title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Event Log", modifier = Modifier.weight(1f))
                     TextButton(onClick = {
@@ -143,11 +231,13 @@ fun MainScreen(
             )
         }
     ) { padding ->
+        val scrollState = rememberScrollState()
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             // ── Status Card ──
@@ -254,6 +344,48 @@ fun MainScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     if (!isPaired) {
+                        // ──── QR Code Scan Button ────
+                        OutlinedButton(
+                            onClick = {
+                                val options = ScanOptions().apply {
+                                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                    setPrompt("Scan the Phobri pairing QR code on your desktop")
+                                    setBeepEnabled(false)
+                                    setOrientationLocked(false)
+                                }
+                                qrScanLauncher.launch(options)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                Icons.Default.QrCodeScanner,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Scan QR Code")
+                        }
+
+                        // Show scanned info if available
+                        if (scannedFingerprint != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "✓ Scanned from QR code",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            "— or enter manually —",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
                         OutlinedTextField(
                             value = pairingCode,
                             onValueChange = { pairingCode = it },
@@ -263,6 +395,17 @@ fun MainScreen(
                             visualTransformation = PasswordVisualTransformation()
                         )
                         Spacer(modifier = Modifier.height(6.dp))
+
+                        // Show fingerprint info if scanned from QR
+                        if (scannedFingerprint != null) {
+                            Text(
+                                "Fingerprint: ${scannedFingerprint!!.take(16)}...",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+
                         // Fetch fingerprint from server before saving pairing
                         val trustAllSslContext by remember {
                             mutableStateOf(
@@ -293,6 +436,21 @@ fun MainScreen(
                                     isPairing = true
                                     pairingError = null
 
+                                    // If we have fingerprint from QR, use it directly (no ping needed)
+                                    if (scannedFingerprint != null && scannedFingerprint!!.length == 64) {
+                                        pairingManager.savePairing(
+                                            token = token,
+                                            fingerprint = scannedFingerprint!!,
+                                            host = host,
+                                            port = port
+                                        )
+                                        isPaired = true
+                                        isPairing = false
+                                        pairingError = null
+                                        return@Button
+                                    }
+
+                                    // Fallback: fetch fingerprint from server via ping
                                     coroutineScope.launch {
                                         val fingerprint = withContext(Dispatchers.IO) {
                                             try {
@@ -353,36 +511,46 @@ fun MainScreen(
                             Text("Paired to desktop", style = MaterialTheme.typography.bodyLarge)
                         }
                         Spacer(modifier = Modifier.height(4.dp))
-                        TextButton(onClick = {
-                            pairingManager.clearPairing()
-                            isPaired = false
-                        }) {
-                            Text("Unpair", color = MaterialTheme.colorScheme.error)
+                        Row {
+                            TextButton(onClick = {
+                                pairingManager.clearPairing()
+                                isPaired = false
+                                scannedFingerprint = null
+                            }) {
+                                Text("Unpair", color = MaterialTheme.colorScheme.error)
+                            }
+                            TextButton(onClick = {
+                                showConnectionSettings = !showConnectionSettings
+                            }) {
+                                Text(if (showConnectionSettings) "Hide Settings" else "Change Settings...")
+                            }
                         }
                     }
                 }
             }
 
             // ── Connection Settings ──
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Connection", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = manualHost,
-                        onValueChange = { manualHost = it },
-                        label = { Text("Desktop IP / Hostname") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = manualPort,
-                        onValueChange = { manualPort = it },
-                        label = { Text("Port") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+            if (!isPaired || showConnectionSettings) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Connection", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = manualHost,
+                            onValueChange = { manualHost = it },
+                            label = { Text("Desktop IP / Hostname") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = manualPort,
+                            onValueChange = { manualPort = it },
+                            label = { Text("Port") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
                 }
             }
 
@@ -445,8 +613,7 @@ fun MainScreen(
                 }
             }
 
-            // Spacer to push button to bottom
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Version
             Text(

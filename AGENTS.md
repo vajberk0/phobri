@@ -116,8 +116,8 @@ Auth Challenge: `nonce` (64-char hex), `ts` (epoch millis), `hmac` (64-char hex)
 - [x] ~~Pairing loop bug — fixed with pending token mechanism~~
 - [x] ~~Android CIO engine → OkHttp for hostname verification control~~
 - [x] Proper TOFU cert pinning for Ktor OkHttp (trust-all for dev → pinned TrustManager)
+- [x] Easy server setup in the client via QR code
 - [ ] Server cert SAN should include Tailscale hostname at generation time
-- [ ] Easy server setup in the client via QR code
 - [ ] FCM integration for reliable wake (optional)
 - [ ] SMS sending from desktop
 - [ ] Conversation search

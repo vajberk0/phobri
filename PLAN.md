@@ -188,6 +188,7 @@ All messages are JSON with a type discriminator:
 | `WebSocketClient` | Ktor WebSocket client with auto-reconnect |
 | `UdpWakeListener` | `DatagramSocket` listener on port 9876 |
 | `PairingManager` | TOFU cert pinning + pairing token storage + sync config (SMS/calls toggles, max entries) |
+| `QrPairingData` | Parses `phobri://pair` URIs from scanned QR codes |
 | `FcmReceiver` | `FirebaseMessagingService` for FCM wake (optional) |
 
 ### 4.3 Permissions
@@ -301,12 +302,15 @@ WebSocket connections are forcibly closed.
 
 ### 6.4 Pairing Flow
 1. Desktop generates a pairing token (32 random hex bytes)
-2. Desktop shows token as QR code and text
-3. User enters token on Android (or scans QR)
-4. Android connects via WSS and sends `pair.init` with token
-5. Desktop validates token, stores pairing
-6. Desktop sends SIK to Android (over the TLS-encrypted channel)
-7. Android stores cert fingerprint + pairing token + SIK + desktop addresses
+2. Desktop encodes pairing info as QR code (`phobri://pair?h=...&p=...&t=...&f=...`)
+   and displays it in the Settings tab alongside the human-readable token
+3. Android scans QR code (via embedded ZXing scanner or external QR app)
+   → host, port, token, and cert fingerprint are auto-filled
+4. (Fallback) User manually enters token, host, and port on Android
+5. Android connects via WSS and sends `pair.init` with token
+6. Desktop validates token, stores pairing
+7. Desktop sends SIK to Android (over the TLS-encrypted channel)
+8. Android stores cert fingerprint + pairing token + SIK + desktop addresses
 
 ### 6.5 Threat Model
 
@@ -406,7 +410,8 @@ phobri/
 │   │   │   └── PhobriDbContext.cs
 │   │   └── Infrastructure/
 │   │       ├── TlsCertificateGenerator.cs
-│   │       └── ConfigurationManager.cs
+│   │       ├── ConfigurationManager.cs
+│   │       └── ByteArrayToBitmapConverter.cs
 │   │
 │   ├── Phobri.Desktop.Tests/
 │   │   ├── Phobri.Desktop.Tests.csproj
