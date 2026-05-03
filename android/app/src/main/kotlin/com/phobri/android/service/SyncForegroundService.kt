@@ -74,6 +74,7 @@ class SyncForegroundService : Service() {
 
     // Collection jobs
     private var stateCollectionJob: Job? = null
+    private var mainLoopJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -120,7 +121,17 @@ class SyncForegroundService : Service() {
         val client = wsClient!!
         stateCollectionJob = serviceScope.launch {
             launch {
-                client.connectionState.collect { _connectionState.value = it }
+                client.connectionState.collect { connected ->
+                    val wasConnected = _connectionState.value
+                    _connectionState.value = connected
+                    // Update notification immediately when connection state changes
+                    if (!connected && wasConnected) {
+                        Log.w(TAG, "Connection lost — updating notification")
+                        updateNotification("Disconnected - retrying...")
+                    } else if (connected && !wasConnected) {
+                        updateNotification("Connected to desktop")
+                    }
+                }
             }
             launch {
                 client.sentCount.collect { _sentCount.value = it }
@@ -147,11 +158,12 @@ class SyncForegroundService : Service() {
         startUdpWakeListener()
         setupObservers()
 
-        serviceScope.launch {
+        mainLoopJob = serviceScope.launch {
             while (isActive && isRunning) {
                 try {
                     // Only connect if not already connected
                     if (!client.connectionState.value) {
+                        updateNotification("Connecting...")
                         val url = "wss://$host:$port/sync"
                         Log.d(TAG, "Connecting to $url")
 
@@ -170,6 +182,8 @@ class SyncForegroundService : Service() {
                             }
 
                             performInitialSync()
+                        } else {
+                            Log.w(TAG, "connect() returned but connectionState is false")
                         }
                     }
                 } catch (e: Exception) {
@@ -179,12 +193,15 @@ class SyncForegroundService : Service() {
 
                 delay(3_000)
             }
+            Log.d(TAG, "Main loop exited (isRunning=$isRunning)")
         }
     }
 
     private fun stopSync() {
+        Log.d(TAG, "stopSync() called, isRunning=$isRunning")
         isRunning = false
         _isServiceRunning.value = false
+        mainLoopJob?.cancel()
         stateCollectionJob?.cancel()
         serviceScope.launch {
             wsClient?.disconnect()
@@ -194,6 +211,7 @@ class SyncForegroundService : Service() {
         callObserver?.stop()
         stopUdpWakeListener()
         _connectionState.value = false
+        updateNotification("Sync stopped")
     }
 
     private suspend fun performInitialSync() {
@@ -242,17 +260,25 @@ class SyncForegroundService : Service() {
         }
 
         if (pairingManager.syncCallsEnabled) {
+            Log.d(TAG, "Setting up CallObserver...")
             callObserver = CallObserver(this)
             callObserver?.start {
                 serviceScope.launch {
+                    Log.d(TAG, "CallObserver triggered — connectionState=${client.connectionState.value}")
                     if (client.connectionState.value) {
                         val latest = callLogReader.readRecentCalls(1)
+                        Log.d(TAG, "CallObserver read ${latest.size} recent calls")
                         latest.firstOrNull()?.let { call ->
+                            Log.d(TAG, "Pushing new call: ${call.number} / ${call.type}")
                             client.pushNewCall(call)
                         }
+                    } else {
+                        Log.w(TAG, "CallObserver triggered but not connected — skipping push")
                     }
                 }
             }
+        } else {
+            Log.d(TAG, "Call log sync disabled — skipping CallObserver setup")
         }
     }
 

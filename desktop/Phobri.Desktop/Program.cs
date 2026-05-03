@@ -219,6 +219,7 @@ sealed class Program
         services.AddSingleton<IPairingService>(pairingService);
 
         // --- Networking ---
+        services.AddSingleton<ILogService, LogService>();
         services.AddSingleton<IWebSocketHandler, WebSocketHandler>();
 
         // --- Server ---
@@ -227,7 +228,8 @@ sealed class Program
             wsHandler: sp.GetRequiredService<IWebSocketHandler>(),
             pairingService: sp.GetRequiredService<IPairingService>(),
             dataService: sp.GetRequiredService<IDataService>(),
-            passwordManager: sp.GetRequiredService<IPasswordManagerService>()));
+            passwordManager: sp.GetRequiredService<IPasswordManagerService>(),
+            logService: sp.GetRequiredService<ILogService>()));
 
         return services.BuildServiceProvider();
     }

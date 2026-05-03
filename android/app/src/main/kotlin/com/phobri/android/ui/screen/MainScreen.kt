@@ -270,7 +270,7 @@ fun MainScreen(
                         Text(
                             text = when {
                                 connected -> "Connected"
-                                isSyncing -> "Connecting..."
+                                isSyncing -> "⚠ Disconnected — retrying..."
                                 else -> "Not syncing"
                             },
                             style = MaterialTheme.typography.titleMedium,

@@ -26,7 +26,8 @@ public partial class MainWindowViewModel : ViewModelBase
         IExternalIpService externalIpService,
         IDataService dataService,
         IUdpWakeService udpWakeService,
-        IPasswordManagerService passwordManager)
+        IPasswordManagerService passwordManager,
+        ILogService logService)
     {
         _syncServer = syncServer;
         _wsHandler = wsHandler;
@@ -39,6 +40,7 @@ public partial class MainWindowViewModel : ViewModelBase
         SmsViewModel = new SmsViewModel(dataService);
         CallLogViewModel = new CallLogViewModel(dataService);
         PairingViewModel = new PairingViewModel(pairingService, externalIpService);
+        LogViewModel = new LogViewModel(logService);
 
         // Subscribe to WebSocket events
         _wsHandler.SmsReceived += OnSmsReceived;
@@ -52,6 +54,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public SmsViewModel SmsViewModel { get; }
     public CallLogViewModel CallLogViewModel { get; }
     public PairingViewModel PairingViewModel { get; }
+    public LogViewModel LogViewModel { get; }
 
     [ObservableProperty]
     private bool _isConnected;

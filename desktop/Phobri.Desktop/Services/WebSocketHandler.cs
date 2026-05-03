@@ -42,6 +42,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private readonly IDataService _dataService;
     private readonly IPairingService _pairingService;
     private readonly IPasswordManagerService _passwordManager;
+    private readonly ILogService _log;
     private WebSocket? _currentSocket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
@@ -54,11 +55,12 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private static readonly TimeSpan AuthRateLimitWindow = TimeSpan.FromMinutes(1);
     private const int MaxAuthAttemptsPerWindow = 5;
 
-    public WebSocketHandler(IDataService dataService, IPairingService pairingService, IPasswordManagerService passwordManager)
+    public WebSocketHandler(IDataService dataService, IPairingService pairingService, IPasswordManagerService passwordManager, ILogService logService)
     {
         _dataService = dataService;
         _pairingService = pairingService;
         _passwordManager = passwordManager;
+        _log = logService;
     }
 
     /// <inheritdoc/>
@@ -73,6 +75,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
     /// <inheritdoc/>
     public async Task HandleConnectionAsync(WebSocket webSocket, CancellationToken ct)
     {
+        _log.Log("WS", "Phone connected");
         Console.WriteLine("[WS] Connection handler started");
         _currentSocket = webSocket;
         _authenticated = false;
@@ -87,6 +90,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
                 // Check if the vault has been locked (auto-lock or manual)
                 if (!_passwordManager.IsUnlocked)
                 {
+                    _log.Log("WS", "Vault locked — closing connection");
                     Console.WriteLine("[WS] Vault locked — closing connection");
                     await webSocket.CloseAsync(
                         WebSocketCloseStatus.PolicyViolation, "Server locked", ct);
@@ -132,6 +136,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
         }
         finally
         {
+            _log.Log("WS", "Phone disconnected");
             Console.WriteLine("[WS] Connection handler ended");
             _currentSocket = null;
             _authenticated = false;
@@ -187,18 +192,22 @@ public sealed class WebSocketHandler : IWebSocketHandler
             switch (msg.Type)
             {
                 case MessageType.Push:
+                    _log.Log("WS", $"← {msg.Action}", msg.Payload?.GetRawText()?.Truncate(200));
                     await HandlePushAsync(msg, ct);
                     break;
 
                 case MessageType.Response:
+                    _log.Log("WS", $"← resp {msg.Action}");
                     await HandleResponseAsync(msg, ct);
                     break;
 
                 case MessageType.Request:
+                    _log.Log("WS", $"← req {msg.Action}");
                     await HandleRequestAsync(msg, ct);
                     break;
 
                 case MessageType.Error:
+                    _log.Log("WS", $"← error: {msg.Error}");
                     System.Diagnostics.Debug.WriteLine(
                         $"Phone error: {msg.Error}");
                     break;
@@ -216,6 +225,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
         // Reject push messages from unauthenticated connections
         if (!_authenticated)
         {
+            _log.Log("WS", $"REJECTED push {msg.Action} — not authenticated");
             Console.WriteLine($"[push] REJECTED {msg.Action} — connection not authenticated");
             await SendMessageAsync(
                 ProtocolMessage.ErrorMessage("Not authenticated. Send pair.init or auth.challenge first.", msg.Id), ct);
@@ -235,6 +245,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
                         JsonContext.DefaultOptions);
                     if (sms is not null)
                     {
+                        _log.Log("WS", $"sms.new: {sms.DisplayName} — \"{sms.Body?.Truncate(80)}\"");
                         await _dataService.UpsertSmsAsync(sms);
                         SmsReceived?.Invoke(this, sms);
                     }
@@ -249,6 +260,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
                         JsonContext.DefaultOptions);
                     if (call is not null)
                     {
+                        _log.Log("WS", $"call.new: {call.DisplayName} ({call.Type}) duration={call.Duration}s");
                         await _dataService.UpsertCallAsync(call);
                         CallReceived?.Invoke(this, call);
                     }
@@ -416,6 +428,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
         // Mark this connection as authenticated — the client has proven
         // knowledge of the SIK
         _authenticated = true;
+        _log.Log("WS", "🔐 Auth challenge OK — connection authenticated");
 
         await SendMessageAsync(
             ProtocolMessage.Response("auth.challenge",
@@ -449,11 +462,13 @@ public sealed class WebSocketHandler : IWebSocketHandler
             if (!_pairingService.IsPaired)
             {
                 var confirmed = _pairingService.ConfirmPairing(token);
+                _log.Log("WS", $"pair.init confirmed (first-time pairing): {confirmed}");
                 Console.WriteLine($"[pair.init] ConfirmPairing result: {confirmed}");
             }
 
             // Mark this connection as authenticated
             _authenticated = true;
+            _log.Log("WS", "🔑 pair.init OK — connection authenticated");
 
             await SendMessageAsync(
                 ProtocolMessage.Response("pair.confirmed", new { status = "ok" }), ct);

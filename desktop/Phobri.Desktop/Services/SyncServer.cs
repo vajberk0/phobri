@@ -20,6 +20,7 @@ public sealed class SyncServer : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly IPasswordManagerService _passwordManager;
     private readonly IPairingService _pairingService;
+    private readonly ILogService _log;
 
     public int Port { get; }
     public bool IsRunning { get; private set; }
@@ -29,11 +30,13 @@ public sealed class SyncServer : IDisposable
         IWebSocketHandler wsHandler,
         IPairingService pairingService,
         IDataService dataService,
-        IPasswordManagerService passwordManager)
+        IPasswordManagerService passwordManager,
+        ILogService logService)
     {
         Port = port;
         _passwordManager = passwordManager;
         _pairingService = pairingService;
+        _log = logService;
 
         var builder = WebApplication.CreateBuilder();
 
@@ -72,13 +75,16 @@ public sealed class SyncServer : IDisposable
         // Simple request logging middleware
         _app.Use(async (context, next) =>
         {
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {context.Connection.RemoteIpAddress}:{context.Connection.RemotePort} → {context.Request.Method} {context.Request.Path}");
+            var msg = $"{context.Connection.RemoteIpAddress}:{context.Connection.RemotePort} → {context.Request.Method} {context.Request.Path}";
+            _log.Log("REST", msg);
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {msg}");
             await next();
         });
 
         // Map WebSocket endpoint
         _app.Map("/sync", async (HttpContext context) =>
         {
+            _log.Log("REST", $"WS upgrade request from {context.Connection.RemoteIpAddress}");
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] WS connection attempt from {context.Connection.RemoteIpAddress}");
 
             if (!context.WebSockets.IsWebSocketRequest)
@@ -91,6 +97,7 @@ public sealed class SyncServer : IDisposable
             // Check if server is unlocked
             if (!passwordManager.IsUnlocked)
             {
+                _log.Log("REST", "WS rejected — server locked (423)");
                 context.Response.StatusCode = 423; // Locked
                 await context.Response.WriteAsync("Server is locked. Unlock with password first.");
                 return;
@@ -206,6 +213,7 @@ public sealed class SyncServer : IDisposable
 
     public async Task StartAsync()
     {
+        _log.Log("SERVER", $"Starting on port {Port} (HTTPS) and {Port + 1} (HTTP health)");
         _runningTask = _app.RunAsync(_cts.Token);
         IsRunning = true;
         await Task.CompletedTask;
@@ -213,6 +221,7 @@ public sealed class SyncServer : IDisposable
 
     public async Task StopAsync()
     {
+        _log.Log("SERVER", "Stopping server");
         await _cts.CancelAsync();
         if (_runningTask is not null)
         {

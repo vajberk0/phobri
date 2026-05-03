@@ -187,6 +187,7 @@ public partial class App : Application
         services.AddSingleton<IPairingService>(pairingService);
 
         // --- Networking ---
+        services.AddSingleton<ILogService, LogService>();
         services.AddSingleton<IWebSocketHandler, WebSocketHandler>();
         services.AddSingleton<IUdpWakeService, UdpWakeService>();
         services.AddSingleton<IExternalIpService>(sp =>
@@ -203,7 +204,8 @@ public partial class App : Application
                 wsHandler: sp.GetRequiredService<IWebSocketHandler>(),
                 pairingService: sp.GetRequiredService<IPairingService>(),
                 dataService: sp.GetRequiredService<IDataService>(),
-                passwordManager: sp.GetRequiredService<IPasswordManagerService>());
+                passwordManager: sp.GetRequiredService<IPasswordManagerService>(),
+                logService: sp.GetRequiredService<ILogService>());
         });
 
         // --- ViewModels ---

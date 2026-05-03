@@ -146,12 +146,13 @@ class PhobriWebSocketClient(
                             }
                         }
                     }
-                    addEvent("disconnect", "Connection closed by server")
+                    addEvent("disconnect", "Server closed WebSocket")
                 } catch (e: Exception) {
                     if (e !is kotlinx.coroutines.CancellationException) {
-                        addEvent("disconnect", "Connection lost: ${e.message}")
+                        addEvent("error", "Connection lost: ${e.javaClass.simpleName}: ${e.message}")
                     }
                 } finally {
+                    addEvent("disconnect", "WebSocket closed (was session=${session != null})")
                     session = null
                     _connectionState.value = false
                 }
@@ -222,21 +223,38 @@ class PhobriWebSocketClient(
     }
 
     suspend fun sendMessage(message: ProtocolMessage) {
-        session?.let { ws ->
+        val ws = session
+        if (ws == null) {
+            addEvent("error", "Cannot send ${message.action} — no session")
+            return
+        }
+        try {
             val text = json.encodeToString(ProtocolMessage.serializer(), message)
             ws.send(Frame.Text(text))
             _sentCount.value++
             addEvent("send", "${message.type}/${message.action}")
+        } catch (e: Exception) {
+            addEvent("error", "Send ${message.action} failed: ${e.message}")
+            throw e
         }
     }
 
     suspend fun pushNewSms(sms: SmsMessage) {
+        if (session == null) {
+            addEvent("error", "pushNewSms skipped — no active session")
+            return
+        }
         val payload = json.encodeToJsonElement(SmsMessage.serializer(), sms)
         val msg = ProtocolMessage(type = MessageType.PUSH, action = "sms.new", payload = payload)
         sendMessage(msg)
     }
 
     suspend fun pushNewCall(call: CallLogEntry) {
+        if (session == null) {
+            addEvent("error", "pushNewCall skipped — no active session (call: ${call.number})")
+            return
+        }
+        addEvent("send", "Pushing call: ${call.number} (${call.type})")
         val payload = json.encodeToJsonElement(CallLogEntry.serializer(), call)
         val msg = ProtocolMessage(type = MessageType.PUSH, action = "call.new", payload = payload)
         sendMessage(msg)

@@ -57,6 +57,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
         var pairingService = new PairingService(configManager, passwordManager);
         services.AddSingleton<IPairingService>(pairingService);
 
+        services.AddSingleton<ILogService, LogService>();
         services.AddSingleton<IWebSocketHandler, WebSocketHandler>();
 
         services.AddSingleton(sp => new SyncServer(
@@ -64,7 +65,8 @@ public sealed class FullProtocolTests : IAsyncLifetime
             wsHandler: sp.GetRequiredService<IWebSocketHandler>(),
             pairingService: sp.GetRequiredService<IPairingService>(),
             dataService: sp.GetRequiredService<IDataService>(),
-            passwordManager: sp.GetRequiredService<IPasswordManagerService>()));
+            passwordManager: sp.GetRequiredService<IPasswordManagerService>(),
+            logService: sp.GetRequiredService<ILogService>()));
 
         _services = services.BuildServiceProvider();
         _server = _services.GetRequiredService<SyncServer>();
