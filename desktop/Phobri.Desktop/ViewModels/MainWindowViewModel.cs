@@ -17,6 +17,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly IExternalIpService _externalIpService;
     private readonly IDataService _dataService;
     private readonly IUdpWakeService _udpWakeService;
+    private readonly IPasswordManagerService _passwordManager;
 
     public MainWindowViewModel(
         SyncServer syncServer,
@@ -24,7 +25,8 @@ public partial class MainWindowViewModel : ViewModelBase
         IPairingService pairingService,
         IExternalIpService externalIpService,
         IDataService dataService,
-        IUdpWakeService udpWakeService)
+        IUdpWakeService udpWakeService,
+        IPasswordManagerService passwordManager)
     {
         _syncServer = syncServer;
         _wsHandler = wsHandler;
@@ -32,6 +34,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _externalIpService = externalIpService;
         _dataService = dataService;
         _udpWakeService = udpWakeService;
+        _passwordManager = passwordManager;
 
         SmsViewModel = new SmsViewModel(dataService);
         CallLogViewModel = new CallLogViewModel(dataService);
@@ -41,6 +44,9 @@ public partial class MainWindowViewModel : ViewModelBase
         _wsHandler.SmsReceived += OnSmsReceived;
         _wsHandler.CallReceived += OnCallReceived;
         _wsHandler.ConnectionStateChanged += OnConnectionStateChanged;
+
+        // Initial vault state
+        RefreshVaultState();
     }
 
     public SmsViewModel SmsViewModel { get; }
@@ -58,6 +64,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string? _externalIp;
+
+    [ObservableProperty]
+    private bool _isVaultConfigured;
+
+    [ObservableProperty]
+    private bool _isVaultUnlocked;
 
     [ObservableProperty]
     private int _selectedTabIndex;
@@ -117,6 +129,51 @@ public partial class MainWindowViewModel : ViewModelBase
         StatusText = ExternalIp is not null
             ? $"External IP: {ExternalIp}"
             : "Could not detect external IP";
+    }
+
+    /// <summary>
+    /// Lock the vault manually.
+    /// </summary>
+    [RelayCommand]
+    private async Task LockVaultAsync()
+    {
+        _passwordManager.Lock();
+        await _dataService.LockAsync();
+        RefreshVaultState();
+        StatusText = "Vault locked";
+    }
+
+    /// <summary>
+    /// Show unlock dialog.
+    /// </summary>
+    [RelayCommand]
+    private async Task UnlockVaultAsync()
+    {
+        var unlockDialog = new Views.PasswordDialog(_passwordManager, isSetupMode: false);
+        // Find the main window to use as owner
+        var mainWindow = Avalonia.Application.Current?.ApplicationLifetime
+            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+            ? desktop.MainWindow
+            : null;
+
+        if (mainWindow is null) return;
+
+        await unlockDialog.ShowDialog(mainWindow);
+        if (unlockDialog.Success)
+        {
+            App.UnlockDatabase(_dataService, _passwordManager);
+            RefreshVaultState();
+            StatusText = "Vault unlocked";
+        }
+    }
+
+    /// <summary>
+    /// Refresh the vault state properties from the password manager.
+    /// </summary>
+    public void RefreshVaultState()
+    {
+        IsVaultConfigured = _passwordManager.IsConfigured;
+        IsVaultUnlocked = _passwordManager.IsUnlocked;
     }
 
     // --- Event Handlers ---

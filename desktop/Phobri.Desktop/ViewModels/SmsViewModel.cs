@@ -42,6 +42,11 @@ public partial class SmsViewModel : ViewModelBase
             Messages = new ObservableCollection<SmsMessage>(
                 await _dataService.GetSmsMessagesAsync(limit: 200));
         }
+        catch (Exception ex)
+        {
+            Messages = [];
+            App.ShowExceptionDialog("Load Messages Error", ex);
+        }
         finally
         {
             IsLoading = false;
@@ -73,6 +78,11 @@ public partial class SmsViewModel : ViewModelBase
 
             Conversations = new ObservableCollection<ConversationGroup>(groups);
         }
+        catch (Exception ex)
+        {
+            Conversations = [];
+            App.ShowExceptionDialog("Load Conversations Error", ex);
+        }
         finally
         {
             IsLoading = false;
@@ -89,6 +99,11 @@ public partial class SmsViewModel : ViewModelBase
         {
             Messages = new ObservableCollection<SmsMessage>(
                 await _dataService.GetConversationAsync(address, limit: 200));
+        }
+        catch (Exception ex)
+        {
+            Messages = [];
+            App.ShowExceptionDialog("Load Conversation Error", ex);
         }
         finally
         {

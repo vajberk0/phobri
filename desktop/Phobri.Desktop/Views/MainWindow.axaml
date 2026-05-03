@@ -248,6 +248,37 @@
                         <Border Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
                                 Padding="12" CornerRadius="6">
                             <StackPanel Spacing="8">
+                                <TextBlock Text="🔒 Vault" FontWeight="Bold" FontSize="14" />
+                                <TextBlock>
+                                    <TextBlock.Text>
+                                        <MultiBinding StringFormat="Configured: {0}">
+                                            <Binding Path="IsVaultConfigured" />
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                                <TextBlock>
+                                    <TextBlock.Text>
+                                        <MultiBinding StringFormat="Unlocked: {0}">
+                                            <Binding Path="IsVaultUnlocked" />
+                                        </MultiBinding>
+                                    </TextBlock.Text>
+                                </TextBlock>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Command="{Binding UnlockVaultCommand}"
+                                            Content="🔓 Unlock"
+                                            IsEnabled="{Binding IsVaultConfigured}" />
+                                    <Button Command="{Binding LockVaultCommand}"
+                                            Content="🔒 Lock"
+                                            IsEnabled="{Binding IsVaultUnlocked}" />
+                                </StackPanel>
+                                <TextBlock Text="The vault encrypts all messages, call logs, and pairing keys on disk. Locking clears all keys from memory."
+                                           FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                                Padding="12" CornerRadius="6">
+                            <StackPanel Spacing="8">
                                 <TextBlock Text="External Access" FontWeight="Bold" FontSize="14" />
                                 <TextBlock Text="{Binding ExternalIp}" />
                                 <TextBlock Text="For off-LAN access, forward ports 8765-8766 to this machine."

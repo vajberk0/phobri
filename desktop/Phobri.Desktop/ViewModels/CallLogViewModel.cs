@@ -48,6 +48,13 @@ public partial class CallLogViewModel : ViewModelBase
             TotalCalls = Calls.Count;
             MissedCalls = Calls.Count(c => c.Type == CallType.Missed);
         }
+        catch (Exception ex)
+        {
+            Calls = [];
+            TotalCalls = 0;
+            MissedCalls = 0;
+            App.ShowExceptionDialog("Load Call Log Error", ex);
+        }
         finally
         {
             IsLoading = false;
