@@ -113,6 +113,9 @@ gen-external-apklibs/
 # Phobri runtime data (cert, db, config)
 ~/.phobri/
 
+# Firebase config — contains secrets, use .example template instead
+**/google-services.json
+
 # Development environment
 .env
 *.env.local
