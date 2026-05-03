@@ -12,10 +12,12 @@ namespace Phobri.Desktop.ViewModels;
 public partial class SmsViewModel : ViewModelBase
 {
     private readonly IDataService _dataService;
+    private readonly IWebSocketHandler _wsHandler;
 
-    public SmsViewModel(IDataService dataService)
+    public SmsViewModel(IDataService dataService, IWebSocketHandler wsHandler)
     {
         _dataService = dataService;
+        _wsHandler = wsHandler;
     }
 
     [ObservableProperty]
@@ -59,6 +61,26 @@ public partial class SmsViewModel : ViewModelBase
         IsLoading = true;
         try
         {
+            // Request fresh SMS sync from the phone (if connected)
+            if (_wsHandler.IsConnected)
+            {
+                try
+                {
+                    var request = ProtocolMessage.Request("sms.sync.request", new
+                    {
+                        after = (long?)null,
+                        limit = 200
+                    });
+                    await _wsHandler.SendMessageAsync(request);
+                    // Brief wait for the phone to push back data
+                    await Task.Delay(1000);
+                }
+                catch (Exception)
+                {
+                    // Phone may have disconnected; fall back to local DB
+                }
+            }
+
             var allMessages = await _dataService.GetSmsMessagesAsync(limit: 500);
 
             // Group by address, take latest message per conversation

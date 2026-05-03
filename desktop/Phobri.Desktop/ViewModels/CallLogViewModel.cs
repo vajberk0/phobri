@@ -12,10 +12,12 @@ namespace Phobri.Desktop.ViewModels;
 public partial class CallLogViewModel : ViewModelBase
 {
     private readonly IDataService _dataService;
+    private readonly IWebSocketHandler _wsHandler;
 
-    public CallLogViewModel(IDataService dataService)
+    public CallLogViewModel(IDataService dataService, IWebSocketHandler wsHandler)
     {
         _dataService = dataService;
+        _wsHandler = wsHandler;
     }
 
     [ObservableProperty]
@@ -42,6 +44,26 @@ public partial class CallLogViewModel : ViewModelBase
         IsLoading = true;
         try
         {
+            // Request fresh call log sync from the phone (if connected)
+            if (_wsHandler.IsConnected)
+            {
+                try
+                {
+                    var request = ProtocolMessage.Request("call.sync.request", new
+                    {
+                        after = (long?)null,
+                        limit = 200
+                    });
+                    await _wsHandler.SendMessageAsync(request);
+                    // Brief wait for the phone to push back data
+                    await Task.Delay(1000);
+                }
+                catch (Exception)
+                {
+                    // Phone may have disconnected; fall back to local DB
+                }
+            }
+
             Calls = new ObservableCollection<CallLogEntry>(
                 await _dataService.GetCallLogAsync(limit: 200));
 

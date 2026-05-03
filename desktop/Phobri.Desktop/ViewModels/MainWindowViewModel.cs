@@ -37,8 +37,8 @@ public partial class MainWindowViewModel : ViewModelBase
         _udpWakeService = udpWakeService;
         _passwordManager = passwordManager;
 
-        SmsViewModel = new SmsViewModel(dataService);
-        CallLogViewModel = new CallLogViewModel(dataService);
+        SmsViewModel = new SmsViewModel(dataService, wsHandler);
+        CallLogViewModel = new CallLogViewModel(dataService, wsHandler);
         PairingViewModel = new PairingViewModel(pairingService, externalIpService);
         LogViewModel = new LogViewModel(logService);
 
