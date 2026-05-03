@@ -14,7 +14,7 @@
 │  Foreground Service            │        │  Avalonia MVVM GUI               │
 │  ┌──────────────────────────┐  │  WSS   │  ┌────────────────────────────┐  │
 │  │ WebSocket CLIENT ────────┼──┼───────►│  │ Kestrel WebSocket Server   │  │
-│  │ (Ktor client)            │  │        │  │ (ports 8765 WSS, 8764 HTTP) │  │
+│  │ (Ktor client)            │  │        │  │ (ports 8765 WSS, 8766 HTTP) │  │
 │  └──────────────────────────┘  │        │  └────────────────────────────┘  │
 │                                │        │                                  │
 │  ┌──────────────────────────┐  │  UDP   │  ┌────────────────────────────┐  │
@@ -60,7 +60,7 @@
    - Desktop fetches external IP from `http://ip.ie.mk/get`
    - Desktop includes external IP in pairing info
    - Android uses external IP when not on same LAN
-   - User must set up port forwarding on their router (8764, 8765)
+   - User must set up port forwarding on their router (8765 WSS, 8766 HTTP)
 
 ---
 
@@ -92,13 +92,13 @@ All messages are JSON with a type discriminator:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/ping` | Health check, returns server info + external IP |
+| `GET` | `/api/v1/ping` | Health check, returns server info + lock status |
+| `GET` | `/api/v1/auth/status` | Returns lock status and password config state |
 | `POST` | `/api/v1/pair/request` | Initiate pairing (first connection) |
 | `POST` | `/api/v1/pair/confirm` | Confirm pairing with token |
 | `GET` | `/api/v1/sms?after={ts}&limit={n}` | Get SMS messages (paginated by date) |
 | `GET` | `/api/v1/sms/conversation/{number}` | Get conversation thread |
 | `GET` | `/api/v1/calls?after={ts}&limit={n}` | Get call log entries |
-| `POST` | `/api/v1/sms/send` | Send SMS from the computer |
 
 ### 2.4 WebSocket Actions
 
@@ -168,7 +168,7 @@ All messages are JSON with a type discriminator:
 ### 4.1 Technology Stack
 - **Language:** Kotlin
 - **Min SDK:** 26 (Android 8.0)
-- **Target SDK:** 34 (Android 14)
+- **Target SDK:** 35 (Android 14)
 - **UI:** Jetpack Compose
 - **HTTP/WS Client:** Ktor Client
 - **Serialization:** kotlinx.serialization
@@ -180,16 +180,16 @@ All messages are JSON with a type discriminator:
 | Component | Purpose |
 |-----------|---------|
 | `MainActivity` | Single activity, hosts Compose UI |
-| `SyncService` | Foreground service, runs WebSocket client + UDP listener |
+| `SyncForegroundService` | Foreground service, runs WebSocket client + UDP listener |
 | `SmsReader` | Reads SMS via `ContentResolver` |
 | `CallLogReader` | Reads call log via `ContentResolver` |
 | `SmsObserver` | `ContentObserver` for real-time SMS detection |
 | `CallObserver` | `PhoneStateListener` for call state changes |
-| `WebSocketClient` | Ktor WebSocket client with auto-reconnect |
+| `PhobriWebSocketClient` | Ktor WebSocket client with auto-reconnect |
 | `UdpWakeListener` | `DatagramSocket` listener on port 9876 |
 | `PairingManager` | TOFU cert pinning + pairing token storage + sync config (SMS/calls toggles, max entries) |
-| `QrPairingData` | Parses `phobri://pair` URIs from scanned QR codes |
 | `FcmReceiver` | `FirebaseMessagingService` for FCM wake (optional) |
+| `IpDetector` | Local IP detection for LAN connectivity |
 
 ### 4.3 Permissions
 - `READ_SMS`
@@ -216,7 +216,7 @@ All messages are JSON with a type discriminator:
 - **MVVM Toolkit:** CommunityToolkit.Mvvm
 - **HTTP Server:** ASP.NET Core Kestrel (embedded)
 - **WebSocket Server:** ASP.NET Core WebSocket middleware
-- **Database:** SQLite via Microsoft.Data.Sqlite
+- **Database:** SQLite via Microsoft.Data.Sqlite.Core with SQLite3MC for page-level encryption
 - **Serialization:** System.Text.Json
 - **HTTP Client:** HttpClient (IHttpClientFactory)
 - **Testing:** xUnit 3
@@ -229,9 +229,11 @@ All messages are JSON with a type discriminator:
 | `UdpWakeService` | Sends UDP wake packets to phone |
 | `ExternalIpService` | Fetches external IP from `ip.ie.mk` |
 | `PairingService` | Manages TOFU pairing, generates self-signed certs |
-| `DataService` | SQLite CRUD for local SMS/call log cache (page-level AES encrypted) |
+| `DataService` | SQLite CRUD for local SMS/call log cache (page-level ChaCha20-Poly1305 encrypted via SQLite3MC) |
+| `PasswordManagerService` | Password setup, unlock, auto-lock, envelope encryption |
+| `LogService` | Structured logging for debug and UI event log |
 | `WebSocketHandler` | Handles WebSocket connections from phone |
-| `FcmPushService` | Sends FCM pushes via Firebase Admin SDK (optional) |
+| `FcmPushService` / `IFcmPushService` | Sends FCM pushes via Firebase Admin SDK (optional) |
 | `MainViewModel` | Main window VM: connection status, sync controls |
 | `SmsViewModel` | SMS list VM with conversation grouping |
 | `CallLogViewModel` | Call log list VM |
@@ -349,7 +351,7 @@ phobri/
 │           │       ├── MainActivity.kt
 │           │       ├── service/
 │           │       │   ├── SyncForegroundService.kt
-│           │       │   └── UdpWakeListener.kt
+│           │       │   └── FcmReceiver.kt
 │           │       ├── sync/
 │           │       │   ├── SmsReader.kt
 │           │       │   ├── CallLogReader.kt
@@ -366,11 +368,10 @@ phobri/
 │           │       │   └── IpDetector.kt
 │           │       └── ui/
 │           │           ├── theme/
-│           │           ├── screen/
-│           │           │   ├── MainScreen.kt
-│           │           │   ├── PairingScreen.kt
-│           │           │   └── SettingsScreen.kt
-│           │           └── component/
+│           │           │   ├── Color.kt
+│           │           │   └── Theme.kt
+│           │           └── screen/
+│           │               └── MainScreen.kt
 │           └── test/
 │               └── kotlin/com/phobri/android/
 │                   ├── sync/
@@ -390,9 +391,11 @@ phobri/
 │   │   ├── MainWindow.axaml
 │   │   ├── MainWindow.axaml.cs
 │   │   ├── ViewModels/
-│   │   │   ├── MainViewModel.cs
+│   │   │   ├── ViewModelBase.cs
+│   │   │   ├── MainWindowViewModel.cs
 │   │   │   ├── SmsViewModel.cs
 │   │   │   ├── CallLogViewModel.cs
+│   │   │   ├── LogViewModel.cs
 │   │   │   └── PairingViewModel.cs
 │   │   ├── Models/
 │   │   │   ├── SmsMessage.cs
@@ -405,13 +408,21 @@ phobri/
 │   │   │   ├── ExternalIpService.cs
 │   │   │   ├── PairingService.cs
 │   │   │   ├── DataService.cs
-│   │   │   └── IFcmPushService.cs
-│   │   ├── Data/
-│   │   │   └── PhobriDbContext.cs
-│   │   └── Infrastructure/
-│   │       ├── TlsCertificateGenerator.cs
-│   │       ├── ConfigurationManager.cs
-│   │       └── ByteArrayToBitmapConverter.cs
+│   │   │   ├── PasswordManagerService.cs
+│   │   │   ├── FcmPushService.cs
+│   │   │   └── LogService.cs
+│   │   ├── Views/
+│   │   │   ├── MainWindow.axaml
+│   │   │   ├── MainWindow.axaml.cs
+│   │   │   ├── PasswordDialog.axaml
+│   │   │   └── PasswordDialog.axaml.cs
+│   │   ├── Infrastructure/
+│   │   │   ├── TlsCertificateGenerator.cs
+│   │   │   ├── ConfigurationManager.cs
+│   │   │   ├── CryptoService.cs
+│   │   │   ├── StringExtensions.cs
+│   │   │   └── ByteArrayToBitmapConverter.cs
+│   │   └── ViewLocator.cs
 │   │
 │   ├── Phobri.Desktop.Tests/
 │   │   ├── Phobri.Desktop.Tests.csproj
@@ -533,6 +544,8 @@ phobri/
 | Avalonia.Themes.Fluent | 12.x | Fluent theme |
 | CommunityToolkit.Mvvm | 8.4.x | MVVM toolkit |
 | Microsoft.Data.Sqlite.Core | 10.x | SQLite |
-| SQLite3MC.PCLRaw.bundle | 2.x | Page-level AES SQLite encryption |
-| Microsoft.AspNetCore.Server.Kestrel | 9.x | Embedded HTTP/WS server |
+| SQLite3MC.PCLRaw.bundle | 2.x | Page-level ChaCha20-Poly1305 SQLite encryption |
+| Microsoft.AspNetCore (Kestrel) | 10.x | Embedded HTTP/WS server |
+| FirebaseAdmin | 3.x | FCM push messaging (optional) |
+| QRCoder | 1.x | QR code generation for pairing |
 | xUnit | 3.x | Testing |

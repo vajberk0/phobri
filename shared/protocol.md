@@ -23,9 +23,22 @@ Health check endpoint.
 {
   "status": "ok",
   "version": "1.0.0",
+  "locked": false,
   "paired": true,
   "fingerprint": "a1b2c3...",
   "timestamp": 1714608000000
+}
+```
+
+### GET /auth/status
+Returns the server's lock and password configuration state.
+
+**Response:**
+```json
+{
+  "locked": false,
+  "configured": true,
+  "autoLockMinutes": 2
 }
 ```
 
