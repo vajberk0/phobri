@@ -28,11 +28,15 @@ class CallObserver(
 
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
             != PackageManager.PERMISSION_GRANTED) {
+            android.util.Log.w("CallObserver", "READ_PHONE_STATE permission not granted — call observer disabled")
             return
         }
 
         val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
-            ?: return
+        if (telephonyManager == null) {
+            android.util.Log.w("CallObserver", "TelephonyManager not available — call observer disabled")
+            return
+        }
 
         phoneStateListener = object : PhoneStateListener() {
             override fun onCallStateChanged(state: Int, phoneNumber: String?) {

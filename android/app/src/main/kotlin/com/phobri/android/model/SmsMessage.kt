@@ -1,5 +1,6 @@
 package com.phobri.android.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
@@ -22,7 +23,11 @@ data class SmsMessage(
 
 @Serializable
 enum class SmsType {
-    INBOX, SENT, DRAFT, OUTBOX, FAILED
+    @SerialName("inbox") INBOX,
+    @SerialName("sent") SENT,
+    @SerialName("draft") DRAFT,
+    @SerialName("outbox") OUTBOX,
+    @SerialName("failed") FAILED
 }
 
 /**
@@ -50,5 +55,9 @@ data class CallLogEntry(
 
 @Serializable
 enum class CallType {
-    INCOMING, OUTGOING, MISSED, REJECTED, BLOCKED
+    @SerialName("incoming") INCOMING,
+    @SerialName("outgoing") OUTGOING,
+    @SerialName("missed") MISSED,
+    @SerialName("rejected") REJECTED,
+    @SerialName("blocked") BLOCKED
 }

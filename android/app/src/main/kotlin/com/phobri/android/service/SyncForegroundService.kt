@@ -234,6 +234,8 @@ class SyncForegroundService : Service() {
             if (calls.isNotEmpty()) {
                 client.sendCallSync(calls)
                 Log.d(TAG, "Synced ${calls.size} call log entries")
+            } else {
+                Log.d(TAG, "No call log entries found to sync (check READ_CALL_LOG permission)")
             }
         } else {
             Log.d(TAG, "Call log sync disabled — skipping")
@@ -265,6 +267,9 @@ class SyncForegroundService : Service() {
             callObserver?.start {
                 serviceScope.launch {
                     Log.d(TAG, "CallObserver triggered — connectionState=${client.connectionState.value}")
+                    // Android writes call log entries asynchronously after a call ends;
+                    // give the ContentProvider time to finish writing (500ms delay).
+                    delay(500)
                     if (client.connectionState.value) {
                         val latest = callLogReader.readRecentCalls(1)
                         Log.d(TAG, "CallObserver read ${latest.size} recent calls")

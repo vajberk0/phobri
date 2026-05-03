@@ -37,16 +37,26 @@ class CallLogReader(private val context: Context) {
         val selectionArgs = if (after != null) arrayOf(after.toString()) else null
         val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT $limit"
 
-        contentResolver.query(
-            CallLog.Calls.CONTENT_URI,
-            PROJECTION,
-            selection,
-            selectionArgs,
-            sortOrder
-        )?.use { cursor ->
-            while (cursor.moveToNext()) {
-                calls.add(cursorToCallLogEntry(cursor))
+        try {
+            contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                PROJECTION,
+                selection,
+                selectionArgs,
+                sortOrder
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    try {
+                        calls.add(cursorToCallLogEntry(cursor))
+                    } catch (e: Exception) {
+                        android.util.Log.w("CallLogReader", "Failed to parse call log row", e)
+                    }
+                }
             }
+        } catch (e: SecurityException) {
+            android.util.Log.w("CallLogReader", "Permission denied reading call log: ${e.message}")
+        } catch (e: Exception) {
+            android.util.Log.e("CallLogReader", "Failed to read call log: ${e.message}", e)
         }
 
         return calls
@@ -65,8 +75,10 @@ class CallLogReader(private val context: Context) {
             CallLog.Calls.INCOMING_TYPE -> CallType.INCOMING
             CallLog.Calls.OUTGOING_TYPE -> CallType.OUTGOING
             CallLog.Calls.MISSED_TYPE -> CallType.MISSED
-            CallLog.Calls.REJECTED_TYPE -> CallType.REJECTED
-            CallLog.Calls.BLOCKED_TYPE -> CallType.BLOCKED
+            // REJECTED_TYPE and BLOCKED_TYPE are API 24+ constants;
+            // some OEMs may not define them, so use raw ints as fallback
+            5 -> CallType.REJECTED
+            6 -> CallType.BLOCKED
             else -> CallType.INCOMING
         }
 

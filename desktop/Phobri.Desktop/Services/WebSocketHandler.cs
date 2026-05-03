@@ -275,6 +275,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
                         JsonContext.DefaultOptions);
                     if (sync?.Messages is { Count: > 0 })
                     {
+                        _log.Log("WS", $"sms.sync: {sync.Messages.Count} messages");
                         await _dataService.UpsertSmsBatchAsync(sync.Messages);
                         foreach (var sms in sync.Messages)
                             SmsReceived?.Invoke(this, sms);
@@ -297,6 +298,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
                         JsonContext.DefaultOptions);
                     if (sync?.Calls is { Count: > 0 })
                     {
+                        _log.Log("WS", $"call.sync: {sync.Calls.Count} calls");
                         await _dataService.UpsertCallBatchAsync(sync.Calls);
                         foreach (var call in sync.Calls)
                             CallReceived?.Invoke(this, call);
