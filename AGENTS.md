@@ -40,7 +40,7 @@ Phobri is a two-app system for syncing SMS and call logs from Android to Desktop
 - **MVVM pattern** via `CommunityToolkit.Mvvm` (source generators)
 - **Compiled bindings** enabled by default in Avalonia 12
 - Kestrel server runs **embedded** in the Avalonia app
-- **Headless mode:** `dotnet run -- --headless [--port N] [--password pw] [--password-file path]`
+- **Headless mode:** `dotnet run -- --headless [--port N] [--password pw] [--password-file path] [--fcm-key-path path]`
 - Data stored in `~/.phobri/` (config, SQLite db, TLS cert)
 - **DI container** configured in `App.axaml.cs` (GUI) and `Program.ConfigureHeadlessServices()` (headless)
 - **Namespaces:** `Phobri.Desktop.Models`, `.Services`, `.ViewModels`, `.Views`, `.Infrastructure`

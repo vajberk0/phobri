@@ -37,6 +37,7 @@ sealed class Program
         int port = 8765;
         string? password = null;
         string? passwordFile = null;
+        string? fcmKeyPath = null;
 
         for (int i = 1; i < args.Length; i++)
         {
@@ -53,6 +54,11 @@ sealed class Program
             else if (args[i] == "--password-file" && i + 1 < args.Length)
             {
                 passwordFile = args[i + 1];
+                i++;
+            }
+            else if (args[i] == "--fcm-key-path" && i + 1 < args.Length)
+            {
+                fcmKeyPath = args[i + 1];
                 i++;
             }
         }
@@ -73,6 +79,25 @@ sealed class Program
         var pairingService = services.GetRequiredService<IPairingService>();
         var passwordManager = services.GetRequiredService<IPasswordManagerService>();
         var dataService = services.GetRequiredService<IDataService>();
+        var fcmPush = services.GetRequiredService<IFcmPushService>();
+
+        // Initialize FCM if a key path was provided on the CLI
+        if (fcmKeyPath is not null)
+        {
+            Console.WriteLine($"FCM key path: {fcmKeyPath}");
+            var ok = fcmPush.Initialize(fcmKeyPath);
+            Console.WriteLine(ok ? "  FCM push initialized." : "  FCM: failed to initialize.");
+            if (ok)
+            {
+                // Save to config for auto-init on next start
+                var cfg = new ConfigurationManager().Load() with { FcmServiceAccountPath = fcmKeyPath };
+                new ConfigurationManager().Save(cfg);
+            }
+        }
+        else if (fcmPush.IsInitialized)
+        {
+            Console.WriteLine("  FCM: auto-initialized from saved config.");
+        }
 
         // Handle password
         if (passwordManager.IsConfigured)
@@ -220,6 +245,14 @@ sealed class Program
 
         // --- Networking ---
         services.AddSingleton<ILogService, LogService>();
+        services.AddSingleton<IFcmPushService, FcmPushService>(sp =>
+        {
+            var fcm = new FcmPushService(configManager, sp.GetRequiredService<ILogService>());
+            var savedPath = configManager.Load().FcmServiceAccountPath;
+            if (!string.IsNullOrWhiteSpace(savedPath))
+                fcm.Initialize(savedPath);
+            return fcm;
+        });
         services.AddSingleton<IWebSocketHandler, WebSocketHandler>();
 
         // --- Server ---
