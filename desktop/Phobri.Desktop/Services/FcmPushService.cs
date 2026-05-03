@@ -15,6 +15,9 @@ public interface IFcmPushService
     /// <summary>Whether the service has been initialized with valid credentials.</summary>
     bool IsInitialized { get; }
 
+    /// <summary>Last error message (for UI display). Null if no error.</summary>
+    string? LastError { get; }
+
     /// <summary>
     /// Initialize (or re-initialize) the Firebase app with a service account key file.
     /// Call on startup and whenever the key path changes.
@@ -67,32 +70,51 @@ public sealed class FcmPushService : IFcmPushService, IDisposable
 
         if (string.IsNullOrWhiteSpace(serviceAccountPath))
         {
-            _log.Log("FCM", "No service account path configured — FCM disabled");
+            _lastError = "No service account path configured";
+            _log.Log("FCM", _lastError);
             return false;
         }
 
         if (!File.Exists(serviceAccountPath))
         {
-            _log.Log("FCM", $"Service account file not found: {serviceAccountPath}");
+            _lastError = $"Service account file not found: {serviceAccountPath}";
+            _log.Log("FCM", _lastError);
             return false;
         }
 
         try
         {
+            // Clean up any orphaned default FirebaseApp from previous attempts
+            try
+            {
+                var existingDefault = FirebaseApp.GetInstance("[DEFAULT]");
+                if (existingDefault is not null)
+                {
+                    existingDefault.Delete();
+                }
+            }
+            catch { /* No default app exists, that's fine */ }
+
             var credential = GoogleCredential.FromFile(serviceAccountPath);
             _fcmApp = FirebaseApp.Create(new AppOptions
             {
                 Credential = credential
             });
+            _lastError = null;
             _log.Log("FCM", "Initialized with service account");
             return true;
         }
         catch (Exception ex)
         {
-            _log.Log("FCM", $"Failed to initialize: {ex.Message}");
+            _lastError = ex.InnerException?.Message ?? ex.Message;
+            _log.Log("FCM", $"Failed to initialize: {_lastError}");
             return false;
         }
     }
+
+    /// <summary>Last error message from Initialize (for UI display).</summary>
+    public string? LastError => _lastError;
+    private string? _lastError;
 
     /// <inheritdoc/>
     public async Task<bool> SendWakeAsync(

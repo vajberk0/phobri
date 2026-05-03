@@ -144,27 +144,29 @@ public partial class PairingViewModel : ViewModelBase
     {
         if (_fcmPush is null)
         {
-            FcmStatusText = "FCM service not available";
+            FcmStatusText = "✗ FCM service not available";
             return;
         }
 
         if (string.IsNullOrWhiteSpace(FcmServiceAccountPath))
         {
-            FcmStatusText = "Please enter the path to your Firebase service account JSON key file";
+            FcmStatusText = "✗ Please enter the path to your Firebase service account JSON key file";
             return;
         }
 
         var ok = _fcmPush.Initialize(FcmServiceAccountPath);
         IsFcmReady = ok;
-        FcmStatusText = ok
-            ? "✓ FCM ready — push wake is active"
-            : "✗ Failed to initialize FCM. Check the file path and format.";
-
         if (ok)
         {
+            FcmStatusText = "✓ FCM ready — push wake is active";
             // Save the path to config so it auto-initializes on next start
             var config = _config.Load() with { FcmServiceAccountPath = FcmServiceAccountPath };
             _config.Save(config);
+        }
+        else
+        {
+            var detail = _fcmPush.LastError ?? "unknown error";
+            FcmStatusText = $"✗ Failed: {detail}";
         }
     }
 
