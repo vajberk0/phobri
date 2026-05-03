@@ -20,6 +20,7 @@ public sealed class SyncServer : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly IPasswordManagerService _passwordManager;
     private readonly IPairingService _pairingService;
+    private readonly IDataService _dataService;
     private readonly ILogService _log;
 
     public int Port { get; }
@@ -42,7 +43,15 @@ public sealed class SyncServer : IDisposable
         Port = port;
         _passwordManager = passwordManager;
         _pairingService = pairingService;
+        _dataService = dataService;
         _log = logService;
+
+        // Close the encrypted database when the vault auto-locks
+        passwordManager.VaultLocked += async (_, _) =>
+        {
+            try { await dataService.LockAsync(); }
+            catch { /* Best-effort on shutdown */ }
+        };
 
         var builder = WebApplication.CreateBuilder();
 

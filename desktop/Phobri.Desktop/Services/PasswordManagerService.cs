@@ -71,6 +71,12 @@ public interface IPasswordManagerService
     /// Set the auto-lock timeout (persisted to config).
     /// </summary>
     void SetAutoLockMinutes(int minutes);
+
+    /// <summary>
+    /// Raised when the vault is locked (auto-lock or manual).
+    /// Subscribers can close the database and other protected resources.
+    /// </summary>
+    event EventHandler? VaultLocked;
 }
 
 public sealed class PasswordManagerService : IPasswordManagerService, IDisposable
@@ -84,6 +90,9 @@ public sealed class PasswordManagerService : IPasswordManagerService, IDisposabl
     private byte[]? _sik;
     private string? _pairingToken;
     private bool _isUnlocked;
+
+    /// <inheritdoc/>
+    public event EventHandler? VaultLocked;
 
     public PasswordManagerService(ConfigurationManager config)
     {
@@ -227,6 +236,7 @@ public sealed class PasswordManagerService : IPasswordManagerService, IDisposabl
         _sik = null;
         _pairingToken = null;
         _isUnlocked = false;
+        VaultLocked?.Invoke(this, EventArgs.Empty);
     }
 
     /// <inheritdoc/>

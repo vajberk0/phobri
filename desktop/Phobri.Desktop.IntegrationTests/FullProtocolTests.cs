@@ -492,6 +492,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_AuthChallenge_ExpiredTimestamp()
     {
+        WebSocketHandler.ResetRateLimiter();
         using var ws = await ConnectAsync();
 
         var nonceHex = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
@@ -519,6 +520,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_AuthChallenge_MissingNonce()
     {
+        WebSocketHandler.ResetRateLimiter();
         using var ws = await ConnectAsync();
 
         var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -545,6 +547,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_AuthChallenge_RateLimit()
     {
+        WebSocketHandler.ResetRateLimiter();
         using var ws = await ConnectAsync();
 
         // Send 6 challenges with missing nonce — 5th should still error, 6th should rate-limit
@@ -589,6 +592,7 @@ public sealed class FullProtocolTests : IAsyncLifetime
     [Fact]
     public async Task WebSocket_AuthChallenge_WhenLocked()
     {
+        WebSocketHandler.ResetRateLimiter();
         using var ws = await ConnectAsync();
 
         // Lock the vault

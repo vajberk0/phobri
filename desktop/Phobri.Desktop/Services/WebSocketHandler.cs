@@ -47,14 +47,19 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private WebSocket? _currentSocket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
-    // Per-connection authentication state
+    // Per-connection authentication state.
+    // This handler is a singleton (single phone design), so one connection
+    // at a time is the norm. Reset on each new connection.
     private bool _authenticated;
 
-    // Rate limiting for auth attempts
-    private int _failedAuthAttempts = 0;
-    private DateTime _lastAuthAttempt = DateTime.MinValue;
+    // Global rate limiting for auth attempts (static — shared across all
+    // connections since the handler is a singleton).
+    private static int s_failedAuthAttempts;
+    private static DateTime s_lastAuthAttempt = DateTime.MinValue;
+    private static readonly object s_rateLimitLock = new();
     private static readonly TimeSpan AuthRateLimitWindow = TimeSpan.FromMinutes(1);
     private const int MaxAuthAttemptsPerWindow = 5;
+    private const int MaxMessageSizeBytes = 256 * 1024; // 256KB
 
     public WebSocketHandler(IDataService dataService, IPairingService pairingService, IPasswordManagerService passwordManager, ILogService logService, IFcmPushService? fcmPush = null)
     {
@@ -120,6 +125,13 @@ public sealed class WebSocketHandler : IWebSocketHandler
                         {
                             result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
                             fullMessage.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                            if (fullMessage.Length > MaxMessageSizeBytes)
+                            {
+                                _log.Log("WS", $"Message too large ({fullMessage.Length} bytes) — closing");
+                                await webSocket.CloseAsync(
+                                    WebSocketCloseStatus.MessageTooBig, "Message too large", ct);
+                                return;
+                            }
                         }
                         json = fullMessage.ToString();
                     }
@@ -245,11 +257,15 @@ public sealed class WebSocketHandler : IWebSocketHandler
                     var sms = JsonSerializer.Deserialize<SmsMessage>(
                         msg.Payload.Value.GetRawText(),
                         JsonContext.DefaultOptions);
-                    if (sms is not null)
+                    if (sms is not null && ValidateSmsMessage(sms))
                     {
                         _log.Log("WS", $"sms.new: {sms.DisplayName} — \"{sms.Body?.Truncate(80)}\"");
                         await _dataService.UpsertSmsAsync(sms);
                         SmsReceived?.Invoke(this, sms);
+                    }
+                    else if (sms is not null)
+                    {
+                        _log.Log("WS", $"sms.new: REJECTED invalid message (id={sms.Id})");
                     }
                 }
                 break;
@@ -260,11 +276,15 @@ public sealed class WebSocketHandler : IWebSocketHandler
                     var call = JsonSerializer.Deserialize<CallLogEntry>(
                         msg.Payload.Value.GetRawText(),
                         JsonContext.DefaultOptions);
-                    if (call is not null)
+                    if (call is not null && ValidateCallLogEntry(call))
                     {
                         _log.Log("WS", $"call.new: {call.DisplayName} ({call.Type}) duration={call.Duration}s");
                         await _dataService.UpsertCallAsync(call);
                         CallReceived?.Invoke(this, call);
+                    }
+                    else if (call is not null)
+                    {
+                        _log.Log("WS", $"call.new: REJECTED invalid entry (id={call.Id})");
                     }
                 }
                 break;
@@ -277,17 +297,23 @@ public sealed class WebSocketHandler : IWebSocketHandler
                         JsonContext.DefaultOptions);
                     if (sync?.Messages is { Count: > 0 })
                     {
-                        _log.Log("WS", $"sms.sync: {sync.Messages.Count} messages");
-                        await _dataService.UpsertSmsBatchAsync(sync.Messages);
-                        foreach (var sms in sync.Messages)
-                            SmsReceived?.Invoke(this, sms);
-
-                        // Update sync timestamp if this was a batch
-                        if (sync.Messages.Count > 0)
+                        // Enforce batch size limit (max 50) and validate each message
+                        var validMessages = sync.Messages
+                            .Take(50)
+                            .Where(ValidateSmsMessage)
+                            .ToList();
+                        if (validMessages.Count > 0)
                         {
-                            var maxDate = sync.Messages.Max(m => m.Date);
+                            _log.Log("WS", $"sms.sync: {validMessages.Count} messages");
+                            await _dataService.UpsertSmsBatchAsync(validMessages);
+                            foreach (var sms in validMessages)
+                                SmsReceived?.Invoke(this, sms);
+
+                            var maxDate = validMessages.Max(m => m.Date);
                             await _dataService.SetLastSyncTimestampAsync("sms", maxDate);
                         }
+                        if (sync.Messages.Count > 50)
+                            _log.Log("WS", $"sms.sync: dropped {sync.Messages.Count - 50} excess messages");
                     }
                 }
                 break;
@@ -300,16 +326,23 @@ public sealed class WebSocketHandler : IWebSocketHandler
                         JsonContext.DefaultOptions);
                     if (sync?.Calls is { Count: > 0 })
                     {
-                        _log.Log("WS", $"call.sync: {sync.Calls.Count} calls");
-                        await _dataService.UpsertCallBatchAsync(sync.Calls);
-                        foreach (var call in sync.Calls)
-                            CallReceived?.Invoke(this, call);
-
-                        if (sync.Calls.Count > 0)
+                        // Enforce batch size limit (max 50) and validate each entry
+                        var validCalls = sync.Calls
+                            .Take(50)
+                            .Where(ValidateCallLogEntry)
+                            .ToList();
+                        if (validCalls.Count > 0)
                         {
-                            var maxDate = sync.Calls.Max(c => c.Date);
+                            _log.Log("WS", $"call.sync: {validCalls.Count} calls");
+                            await _dataService.UpsertCallBatchAsync(validCalls);
+                            foreach (var call in validCalls)
+                                CallReceived?.Invoke(this, call);
+
+                            var maxDate = validCalls.Max(c => c.Date);
                             await _dataService.SetLastSyncTimestampAsync("calls", maxDate);
                         }
+                        if (sync.Calls.Count > 50)
+                            _log.Log("WS", $"call.sync: dropped {sync.Calls.Count - 50} excess calls");
                     }
                 }
                 break;
@@ -375,14 +408,18 @@ public sealed class WebSocketHandler : IWebSocketHandler
 
     private async Task HandleAuthChallengeAsync(ProtocolMessage msg, CancellationToken ct)
     {
-        // Rate limit auth attempts
-        if ((DateTime.UtcNow - _lastAuthAttempt) > AuthRateLimitWindow)
+        // Global rate limit auth attempts (thread-safe, shared across connections)
+        lock (s_rateLimitLock)
         {
-            _failedAuthAttempts = 0;
+            if ((DateTime.UtcNow - s_lastAuthAttempt) > AuthRateLimitWindow)
+            {
+                s_failedAuthAttempts = 0;
+            }
+            s_lastAuthAttempt = DateTime.UtcNow;
+            s_failedAuthAttempts++;
         }
-        _lastAuthAttempt = DateTime.UtcNow;
 
-        if (_failedAuthAttempts >= MaxAuthAttemptsPerWindow)
+        if (s_failedAuthAttempts > MaxAuthAttemptsPerWindow)
         {
             await SendMessageAsync(
                 ProtocolMessage.ErrorMessage("Too many authentication attempts. Try again later.", msg.Id), ct);
@@ -392,7 +429,6 @@ public sealed class WebSocketHandler : IWebSocketHandler
         var sik = _pairingService.ServerIdentityKey;
         if (sik is null)
         {
-            _failedAuthAttempts++;
             await SendMessageAsync(
                 ProtocolMessage.ErrorMessage("Server is locked. Unlock with password first.", msg.Id), ct);
             return;
@@ -412,7 +448,6 @@ public sealed class WebSocketHandler : IWebSocketHandler
 
         if (string.IsNullOrEmpty(nonce))
         {
-            _failedAuthAttempts++;
             await SendMessageAsync(
                 ProtocolMessage.ErrorMessage("Missing nonce in auth challenge.", msg.Id), ct);
             return;
@@ -422,7 +457,6 @@ public sealed class WebSocketHandler : IWebSocketHandler
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (Math.Abs(now - timestamp) > 5 * 60 * 1000)
         {
-            _failedAuthAttempts++;
             await SendMessageAsync(
                 ProtocolMessage.ErrorMessage("Challenge timestamp expired.", msg.Id), ct);
             return;
@@ -486,5 +520,68 @@ public sealed class WebSocketHandler : IWebSocketHandler
             await SendMessageAsync(
                 ProtocolMessage.ErrorMessage("Invalid or missing pairing token", msg.Id), ct);
         }
+    }
+
+    /// <summary>
+    /// Reset the global auth rate limiter (for testing / server restart).
+    /// </summary>
+    public static void ResetRateLimiter()
+    {
+        lock (s_rateLimitLock)
+        {
+            s_failedAuthAttempts = 0;
+            s_lastAuthAttempt = DateTime.MinValue;
+        }
+    }
+
+    // --- Input Validation ---
+
+    private static readonly DateTimeOffset MinValidDate = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private const int MaxAddressLength = 256;
+    private const int MaxContactNameLength = 256;
+    private const int MaxBodyLength = 10 * 1024; // 10KB
+
+    /// <summary>
+    /// Validate an SMS message before storage. Rejects oversized fields,
+    /// out-of-range dates, and missing required fields.
+    /// </summary>
+    private static bool ValidateSmsMessage(SmsMessage sms)
+    {
+        if (string.IsNullOrWhiteSpace(sms.Address) || sms.Address.Length > MaxAddressLength)
+            return false;
+        if (sms.ContactName is { Length: > 0 } && sms.ContactName.Length > MaxContactNameLength)
+            return false;
+        if (sms.Body.Length > MaxBodyLength)
+            return false;
+
+        // Validate date is within reasonable range
+        var dateTime = DateTimeOffset.FromUnixTimeMilliseconds(sms.Date);
+        if (dateTime < MinValidDate || dateTime > DateTimeOffset.UtcNow.AddDays(1))
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Validate a call log entry before storage. Rejects oversized fields,
+    /// out-of-range dates, and implausible durations.
+    /// </summary>
+    private static bool ValidateCallLogEntry(CallLogEntry call)
+    {
+        if (string.IsNullOrWhiteSpace(call.Number) || call.Number.Length > MaxAddressLength)
+            return false;
+        if (call.ContactName is { Length: > 0 } && call.ContactName.Length > MaxContactNameLength)
+            return false;
+
+        // Validate date is within reasonable range
+        var dateTime = DateTimeOffset.FromUnixTimeMilliseconds(call.Date);
+        if (dateTime < MinValidDate || dateTime > DateTimeOffset.UtcNow.AddDays(1))
+            return false;
+
+        // Duration must be plausible (0s to 24h)
+        if (call.Duration < 0 || call.Duration > 86_400)
+            return false;
+
+        return true;
     }
 }
