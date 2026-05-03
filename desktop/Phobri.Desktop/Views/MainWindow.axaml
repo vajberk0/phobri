@@ -334,6 +334,66 @@
                                 <Button Command="{Binding RefreshExternalIpCommand}" Content="Refresh IP" />
                             </StackPanel>
                         </Border>
+
+                        <!-- FCM Push Configuration -->
+                        <Border Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                                Padding="12" CornerRadius="6">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="☁ FCM Push Configuration" FontWeight="Bold" FontSize="14" />
+
+                                <TextBlock Text="FCM lets the desktop wake your phone and tell it the server address — useful when the server IP changes or the phone sync stops."
+                                           FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+
+                                <!-- Status indicator -->
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Status:" FontSize="11" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding PairingViewModel.FcmStatusText}"
+                                               FontSize="11" VerticalAlignment="Center"
+                                               FontWeight="Bold" />
+                                </StackPanel>
+
+                                <!-- Service account key path -->
+                                <TextBlock Text="Service Account Key Path:" FontSize="11" />
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBox Text="{Binding PairingViewModel.FcmServiceAccountPath}"
+                                             PlaceholderText="~/.phobri/fcm-service-account.json"
+                                             FontSize="11" FontFamily="Courier New"
+                                             Margin="0,0,8,0" />
+                                    <Button Grid.Column="1"
+                                            Content="📁 Browse"
+                                            VerticalAlignment="Center" />
+                                </Grid>
+
+                                <Button Command="{Binding PairingViewModel.ConfigureFcmCommand}"
+                                        Content="Configure FCM"
+                                        HorizontalAlignment="Left" />
+
+                                <TextBlock Text="Download the JSON key from Firebase Console → Project Settings → Service Accounts → Generate New Private Key."
+                                           FontSize="10" Opacity="0.5" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Wake Phone -->
+                        <Border Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}"
+                                Padding="12" CornerRadius="6">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="📲 Wake Phone" FontWeight="Bold" FontSize="14" />
+
+                                <TextBlock Text="If the phone is disconnected, click Wake to tell it to connect. Tries UDP (LAN) first, then FCM push (internet)."
+                                           FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBox x:Name="PhoneIpBox"
+                                             PlaceholderText="Phone IP (e.g. 192.168.1.10)"
+                                             FontSize="11"
+                                             Margin="0,0,8,0" />
+                                    <Button Grid.Column="1"
+                                            Command="{Binding WakePhoneCommand}"
+                                            CommandParameter="{Binding #PhoneIpBox.Text}"
+                                            Content="📡 Wake Phone" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
