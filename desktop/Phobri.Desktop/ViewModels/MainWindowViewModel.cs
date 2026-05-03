@@ -123,6 +123,26 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Navigate to the Messages tab and load conversations.
+    /// </summary>
+    [RelayCommand]
+    private async Task NavigateToMessagesAsync()
+    {
+        SelectedTabIndex = 0;
+        await SmsViewModel.LoadConversationsCommand.ExecuteAsync(null);
+    }
+
+    /// <summary>
+    /// Navigate to the Calls tab and load the call log.
+    /// </summary>
+    [RelayCommand]
+    private async Task NavigateToCallsAsync()
+    {
+        SelectedTabIndex = 1;
+        await CallLogViewModel.LoadCallLogCommand.ExecuteAsync(null);
+    }
+
+    /// <summary>
     /// Refresh external IP address.
     /// </summary>
     [RelayCommand]

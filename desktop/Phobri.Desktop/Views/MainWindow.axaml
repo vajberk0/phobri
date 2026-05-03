@@ -45,9 +45,9 @@
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
                     <Button Content="📨 Messages"
-                            Command="{Binding SmsViewModel.LoadConversationsCommand}" />
+                            Command="{Binding NavigateToMessagesCommand}" />
                     <Button Content="📞 Calls"
-                            Command="{Binding CallLogViewModel.LoadCallLogCommand}" />
+                            Command="{Binding NavigateToCallsCommand}" />
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
@@ -62,7 +62,7 @@
         </Border>
 
         <!-- Main Content: TabControl -->
-        <TabControl>
+        <TabControl SelectedIndex="{Binding SelectedTabIndex}">
             <!-- Messages Tab -->
             <TabItem Header="📨 Messages">
                 <Grid ColumnDefinitions="280,*">
