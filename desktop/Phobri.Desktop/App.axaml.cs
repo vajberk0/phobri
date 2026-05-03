@@ -188,6 +188,15 @@ public partial class App : Application
 
         // --- Networking ---
         services.AddSingleton<ILogService, LogService>();
+        services.AddSingleton<IFcmPushService, FcmPushService>(sp =>
+        {
+            var fcm = new FcmPushService(configManager, sp.GetRequiredService<ILogService>());
+            // Try to initialize from saved config path if available
+            var savedPath = configManager.Load().FcmServiceAccountPath;
+            if (!string.IsNullOrWhiteSpace(savedPath))
+                fcm.Initialize(savedPath);
+            return fcm;
+        });
         services.AddSingleton<IWebSocketHandler, WebSocketHandler>();
         services.AddSingleton<IUdpWakeService, UdpWakeService>();
         services.AddSingleton<IExternalIpService>(sp =>

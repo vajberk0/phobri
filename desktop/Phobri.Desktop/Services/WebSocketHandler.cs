@@ -43,6 +43,7 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private readonly IPairingService _pairingService;
     private readonly IPasswordManagerService _passwordManager;
     private readonly ILogService _log;
+    private readonly IFcmPushService? _fcmPush;
     private WebSocket? _currentSocket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
@@ -55,12 +56,13 @@ public sealed class WebSocketHandler : IWebSocketHandler
     private static readonly TimeSpan AuthRateLimitWindow = TimeSpan.FromMinutes(1);
     private const int MaxAuthAttemptsPerWindow = 5;
 
-    public WebSocketHandler(IDataService dataService, IPairingService pairingService, IPasswordManagerService passwordManager, ILogService logService)
+    public WebSocketHandler(IDataService dataService, IPairingService pairingService, IPasswordManagerService passwordManager, ILogService logService, IFcmPushService? fcmPush = null)
     {
         _dataService = dataService;
         _pairingService = pairingService;
         _passwordManager = passwordManager;
         _log = logService;
+        _fcmPush = fcmPush;
     }
 
     /// <inheritdoc/>
@@ -318,11 +320,14 @@ public sealed class WebSocketHandler : IWebSocketHandler
                     var fcmPayload = JsonSerializer.Deserialize<FcmTokenPayload>(
                         msg.Payload.Value.GetRawText(),
                         JsonContext.DefaultOptions);
-                    // Store FCM token if needed
                     if (fcmPayload?.Token is { Length: > 0 })
                     {
-                        System.Diagnostics.Debug.WriteLine(
-                            $"Received FCM token: {fcmPayload.Token[..8]}...");
+                        _log.Log("WS", $"fcm.token: {fcmPayload.Token[..8]}...");
+                        // Persist the token so FCM wake can use it
+                        if (_fcmPush is not null)
+                        {
+                            _ = _fcmPush.StoreFcmTokenAsync(fcmPayload.Token);
+                        }
                     }
                 }
                 break;

@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.phobri.android.MainActivity
+import com.google.firebase.messaging.FirebaseMessaging
 import com.phobri.android.model.*
 import com.phobri.android.pairing.PairingManager
 import com.phobri.android.sync.*
@@ -36,6 +37,7 @@ class SyncForegroundService : Service() {
 
         const val ACTION_START = "com.phobri.android.action.START_SYNC"
         const val ACTION_STOP = "com.phobri.android.action.STOP_SYNC"
+        const val ACTION_FCM_TOKEN = "com.phobri.android.action.FCM_TOKEN"
         const val EXTRA_DESKTOP_HOST = "desktop_host"
         const val EXTRA_DESKTOP_PORT = "desktop_port"
 
@@ -95,6 +97,15 @@ class SyncForegroundService : Service() {
             ACTION_STOP -> {
                 stopSync()
                 stopSelf()
+            }
+            ACTION_FCM_TOKEN -> {
+                // Token forwarded from FcmReceiver; if connected, send it now
+                val token = intent.getStringExtra("fcm_token")
+                if (token != null && isRunning) {
+                    serviceScope.launch {
+                        wsClient?.sendFcmToken(token)
+                    }
+                }
             }
         }
         return START_STICKY
@@ -182,6 +193,9 @@ class SyncForegroundService : Service() {
                             }
 
                             performInitialSync()
+
+                            // Send FCM token so desktop can push-wake us
+                            sendCurrentFcmToken(client)
                         } else {
                             Log.w(TAG, "connect() returned but connectionState is false")
                         }
@@ -212,6 +226,32 @@ class SyncForegroundService : Service() {
         stopUdpWakeListener()
         _connectionState.value = false
         updateNotification("Sync stopped")
+    }
+
+    /**
+     * Get the current FCM registration token and send it to the desktop.
+     * This enables the desktop to send push messages that wake the phone.
+     */
+    private suspend fun sendCurrentFcmToken(client: PhobriWebSocketClient) {
+        try {
+            val token = suspendCancellableCoroutine<String?> { cont ->
+                FirebaseMessaging.getInstance().token
+                    .addOnCompleteListener { task ->
+                        if (task.isSuccessful) {
+                            cont.resume(task.result, null)
+                        } else {
+                            // No FCM token available (e.g., no Google Play Services)
+                            Log.w(TAG, "FCM token unavailable: ${task.exception?.message}")
+                            cont.resume(null, null)
+                        }
+                    }
+            }
+            if (token != null) {
+                client.sendFcmToken(token)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to get FCM token: ${e.message}")
+        }
     }
 
     private suspend fun performInitialSync() {

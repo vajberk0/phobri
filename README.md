@@ -22,7 +22,8 @@ Cross-device SMS and call log synchronization between Android and Desktop.
 │  Android (Kotlin) │ ◄───────────────────────► │  Desktop (C# / .NET) │
 │  WebSocket Client │                           │  Kestrel Server      │
 │  ContentResolver  │                           │  Avalonia 12 GUI     │
-│  UDP Wake Listener│                           │  SQLite Cache        │
+│  UDP Wake Listener│  ◄── UDP WAKE ────────── │  SQLite Cache        │
+│  FCM Receiver     │  ◄── FCM push ────────── │  FCM Push Sender     │
 └──────────────────┘                           └──────────────────────┘
 ```
 
@@ -120,6 +121,25 @@ Press Ctrl+C to stop.
 1. Desktop fetches its external IP from `http://ip.ie.mk/get`
 2. Forward ports 8765 (WSS) and 8766 (HTTP) on your router to the desktop
 3. On Android, enter the external IP as the host
+
+### FCM Push-to-Wake (Optional)
+
+FCM enables the desktop to wake the phone and tell it the current server
+address — useful when the server IP changes (Tailscale, DHCP) or the phone
+sync service has stopped.
+
+**Setup:**
+
+1. Create a Firebase project at https://console.firebase.google.com/
+2. Add an Android app with package name `com.phobri.android`
+3. Download `google-services.json` and replace the placeholder in `android/app/`
+4. In Firebase Console → Project Settings → Service Accounts, generate a new private key (JSON)
+5. On the desktop, go to Settings → FCM Configuration and enter the path to the JSON key file
+6. Click "Configure FCM" — status should show "✓ FCM ready"
+
+Once configured, clicking "Wake Phone" on desktop will try both UDP (LAN) and
+FCM push (internet). FCM also auto-wakes the phone when the server's external
+IP changes.
 
 ## Running Tests
 

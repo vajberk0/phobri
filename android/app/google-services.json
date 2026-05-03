@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "phobri-placeholder",
+    "storage_bucket": "phobri-placeholder.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+        "android_client_info": {
+          "package_name": "com.phobri.android"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "PLACEHOLDER_API_KEY_REPLACE_WITH_REAL_ONE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1",
+  "_instructions": "REPLACE THIS FILE with the real google-services.json from your Firebase Console at https://console.firebase.google.com/. Create a project, add an Android app with package 'com.phobri.android', and download the config file."
+}

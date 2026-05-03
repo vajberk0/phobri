@@ -268,6 +268,21 @@ class PhobriWebSocketClient(
         addEvent("send", "sms.sync (${messages.size} messages)")
     }
 
+    /** Send the FCM push token to the desktop so it can wake us later. */
+    suspend fun sendFcmToken(token: String) {
+        if (session == null) {
+            addEvent("error", "sendFcmToken skipped — no active session")
+            return
+        }
+        val payload = json.encodeToJsonElement(
+            FcmTokenPayload.serializer(),
+            FcmTokenPayload(token = token)
+        )
+        val msg = ProtocolMessage(type = MessageType.PUSH, action = "fcm.token", payload = payload)
+        sendMessage(msg)
+        addEvent("send", "fcm.token (${token.take(8)}...)")
+    }
+
     suspend fun sendCallSync(calls: List<CallLogEntry>, hasMore: Boolean = false) {
         val syncPayload = CallSyncPayload(calls = calls, hasMore = hasMore)
         val payload = json.encodeToJsonElement(CallSyncPayload.serializer(), syncPayload)

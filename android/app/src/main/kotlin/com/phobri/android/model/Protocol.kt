@@ -85,3 +85,11 @@ data class AuthChallengePayload(
 data class AuthChallengeResponsePayload(
     val hmac: String
 )
+
+/**
+ * Payload for fcm.token push (phone → desktop).
+ */
+@Serializable
+data class FcmTokenPayload(
+    val token: String
+)

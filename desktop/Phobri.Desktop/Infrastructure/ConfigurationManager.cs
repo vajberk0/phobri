@@ -67,6 +67,10 @@ public sealed record PhobriConfig
     /// <summary>Last known phone FCM token (optional).</summary>
     public string? FcmToken { get; init; }
 
+    /// <summary>Path to the Firebase service account JSON key file.
+    /// Required for FCM push-to-wake functionality.</summary>
+    public string? FcmServiceAccountPath { get; init; }
+
     /// <summary>Last known external IP address.</summary>
     public string? ExternalIp { get; init; }
 

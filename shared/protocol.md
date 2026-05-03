@@ -253,3 +253,60 @@ Desktop fetches external IP from `http://ip.ie.mk/get` and makes it available
 to the Android client for off-LAN connectivity.
 
 The service returns JSON: `{"ip": "203.0.113.1"}` or plain text IP.
+
+## 9. FCM Wake Protocol
+
+When the desktop server wants the Android phone to connect (e.g., server IP
+changed, phone stopped syncing, or UDP wake failed because the phone is not
+on the local network), it sends a high-priority FCM data message.
+
+### 9.1 FCM Token Exchange
+
+After establishing a WebSocket connection and completing authentication, the
+Android client sends its FCM registration token to the desktop:
+
+```json
+{
+  "type": "push",
+  "action": "fcm.token",
+  "payload": {
+    "token": "<fcm-registration-token>"
+  }
+}
+```
+
+The desktop stores this token persistently. When the token is refreshed on
+the Android side (e.g., app reinstall), the new token is sent automatically.
+
+### 9.2 FCM Wake Data Message
+
+Desktop → FCM → Android. This is a Firebase Cloud Messaging data message
+(not a WebSocket message).
+
+**Data payload** (key-value string pairs):
+
+| Key | Value |
+|-----|-------|
+| `type` | `"wake"` |
+| `serverHost` | Current server hostname or IP address |
+| `serverPort` | Server WSS port as string (e.g., `"8765"`) |
+
+**AndroidConfig:** `priority: "high"`, `ttl: 0s` (deliver now or never).
+
+### 9.3 Wake Behavior on Android
+
+When the Android device receives a wake message:
+
+1. `FcmReceiver.onMessageReceived()` is called (works even in background)
+2. If the device is not paired, the wake is ignored
+3. If the server host has changed from the stored one, it's updated
+4. `SyncForegroundService` is started with the new host/port
+5. The service connects to the desktop with standard authentication
+   (challenge-response via SIK)
+
+### 9.4 Desktop Prerequisites
+
+- Firebase project with Cloud Messaging API enabled
+- Service account JSON key file downloaded from Firebase Console
+- The service account key path is configured in the desktop Settings tab
+- This is optional — Phobri works fine without FCM for LAN-only use

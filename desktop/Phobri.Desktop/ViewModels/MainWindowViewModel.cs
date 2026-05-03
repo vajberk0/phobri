@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Phobri.Desktop.Infrastructure;
 using Phobri.Desktop.Models;
 using Phobri.Desktop.Services;
 
@@ -18,6 +19,8 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly IDataService _dataService;
     private readonly IUdpWakeService _udpWakeService;
     private readonly IPasswordManagerService _passwordManager;
+    private readonly IFcmPushService? _fcmPush;
+    private readonly ConfigurationManager _config;
 
     public MainWindowViewModel(
         SyncServer syncServer,
@@ -27,7 +30,9 @@ public partial class MainWindowViewModel : ViewModelBase
         IDataService dataService,
         IUdpWakeService udpWakeService,
         IPasswordManagerService passwordManager,
-        ILogService logService)
+        ILogService logService,
+        ConfigurationManager config,
+        IFcmPushService? fcmPush = null)
     {
         _syncServer = syncServer;
         _wsHandler = wsHandler;
@@ -36,10 +41,12 @@ public partial class MainWindowViewModel : ViewModelBase
         _dataService = dataService;
         _udpWakeService = udpWakeService;
         _passwordManager = passwordManager;
+        _fcmPush = fcmPush;
+        _config = config;
 
         SmsViewModel = new SmsViewModel(dataService, wsHandler);
         CallLogViewModel = new CallLogViewModel(dataService, wsHandler);
-        PairingViewModel = new PairingViewModel(pairingService, externalIpService);
+        PairingViewModel = new PairingViewModel(pairingService, externalIpService, config, fcmPush);
         LogViewModel = new LogViewModel(logService);
 
         // Subscribe to WebSocket events
@@ -111,15 +118,47 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Send a UDP wake packet to the phone.
+    /// Send a wake signal to the phone.
+    /// Tries UDP first (LAN only), then FCM push (works anywhere).
     /// </summary>
     [RelayCommand]
     private async Task WakePhoneAsync(string phoneIp)
     {
-        if (string.IsNullOrWhiteSpace(phoneIp)) return;
+        var results = new List<string>();
 
-        var sent = await _udpWakeService.SendWakeAsync(phoneIp);
-        StatusText = sent ? $"Wake packet sent to {phoneIp}" : $"Failed to send wake packet";
+        // 1) Try UDP wake on LAN
+        if (!string.IsNullOrWhiteSpace(phoneIp))
+        {
+            var udpSent = await _udpWakeService.SendWakeAsync(phoneIp);
+            results.Add(udpSent ? $"UDP wake sent to {phoneIp}" : "UDP wake failed");
+        }
+
+        // 2) Try FCM push (works over internet, even if phone is on cellular)
+        if (_fcmPush is not null && _fcmPush.IsInitialized)
+        {
+            var fcmToken = _fcmPush.GetStoredFcmToken();
+            if (!string.IsNullOrWhiteSpace(fcmToken))
+            {
+                // Pick the best server address: external IP first, then first local address
+                var serverHost = ExternalIp
+                    ?? _pairingService.GetLocalAddresses().FirstOrDefault()
+                    ?? "localhost";
+
+                var fcmSent = await _fcmPush.SendWakeAsync(
+                    fcmToken, serverHost, _syncServer.Port);
+                results.Add(fcmSent ? $"FCM wake sent (host={serverHost})" : "FCM wake failed");
+            }
+            else
+            {
+                results.Add("FCM: no phone token received yet");
+            }
+        }
+        else
+        {
+            results.Add("FCM: not configured (set service account key in Settings)");
+        }
+
+        StatusText = string.Join(" | ", results);
     }
 
     /// <summary>

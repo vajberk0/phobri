@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Phobri.Desktop.Infrastructure;
 using Phobri.Desktop.Services;
 
 namespace Phobri.Desktop.ViewModels;
@@ -13,12 +14,24 @@ public partial class PairingViewModel : ViewModelBase
 {
     private readonly IPairingService _pairingService;
     private readonly IExternalIpService _externalIpService;
+    private readonly IFcmPushService? _fcmPush;
+    private readonly ConfigurationManager _config;
 
-    public PairingViewModel(IPairingService pairingService, IExternalIpService externalIpService)
+    public PairingViewModel(IPairingService pairingService, IExternalIpService externalIpService, ConfigurationManager config, IFcmPushService? fcmPush = null)
     {
         _pairingService = pairingService;
         _externalIpService = externalIpService;
+        _fcmPush = fcmPush;
+        _config = config;
         LocalAddresses = new ObservableCollection<string>();
+        // Load saved FCM config path
+        var savedConfig = _config.Load();
+        if (!string.IsNullOrWhiteSpace(savedConfig.FcmServiceAccountPath))
+        {
+            _fcmServiceAccountPath = savedConfig.FcmServiceAccountPath;
+            IsFcmReady = _fcmPush?.IsInitialized ?? false;
+            FcmStatusText = IsFcmReady ? "✓ FCM ready from saved config" : "FCM not initialized";
+        }
     }
 
     [ObservableProperty]
@@ -54,6 +67,18 @@ public partial class PairingViewModel : ViewModelBase
     /// <summary>Human-readable QR code URI (for display/debug).</summary>
     [ObservableProperty]
     private string? _qrCodeUri;
+
+    /// <summary>Whether FCM push is initialized.</summary>
+    [ObservableProperty]
+    private bool _isFcmReady;
+
+    /// <summary>FCM service account JSON key file path.</summary>
+    [ObservableProperty]
+    private string _fcmServiceAccountPath = "";
+
+    /// <summary>Status text for FCM configuration.</summary>
+    [ObservableProperty]
+    private string _fcmStatusText = "";
 
     [RelayCommand]
     private async Task GeneratePairTokenAsync()
@@ -109,6 +134,53 @@ public partial class PairingViewModel : ViewModelBase
     private async Task RefreshExternalIpAsync()
     {
         ExternalIp = await _externalIpService.GetExternalIpAsync();
+    }
+
+    /// <summary>
+    /// Configure FCM with a service account key file path.
+    /// </summary>
+    [RelayCommand]
+    private void ConfigureFcm()
+    {
+        if (_fcmPush is null)
+        {
+            FcmStatusText = "FCM service not available";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(FcmServiceAccountPath))
+        {
+            FcmStatusText = "Please enter the path to your Firebase service account JSON key file";
+            return;
+        }
+
+        var ok = _fcmPush.Initialize(FcmServiceAccountPath);
+        IsFcmReady = ok;
+        FcmStatusText = ok
+            ? "✓ FCM ready — push wake is active"
+            : "✗ Failed to initialize FCM. Check the file path and format.";
+
+        if (ok)
+        {
+            // Save the path to config so it auto-initializes on next start
+            var config = _config.Load() with { FcmServiceAccountPath = FcmServiceAccountPath };
+            _config.Save(config);
+        }
+    }
+
+    /// <summary>
+    /// Refresh the FCM status.
+    /// </summary>
+    public void RefreshFcmStatus()
+    {
+        if (_fcmPush is null)
+        {
+            IsFcmReady = false;
+            FcmStatusText = "FCM service not available";
+            return;
+        }
+        IsFcmReady = _fcmPush.IsInitialized;
+        FcmStatusText = IsFcmReady ? "✓ FCM ready" : "FCM not configured";
     }
 
     [RelayCommand]

@@ -46,6 +46,13 @@ Phobri is a two-app system for syncing SMS and call logs from Android to Desktop
 - **Namespaces:** `Phobri.Desktop.Models`, `.Services`, `.ViewModels`, `.Views`, `.Infrastructure`
 - Auto-lock: set `AutoLockMinutes: 0` in `~/.phobri/config.json` to disable
 
+### FCM Push Setup
+- Requires Firebase project at https://console.firebase.google.com/
+- Android: replace `android/app/google-services.json` with real one
+- Desktop: set service account key path in Settings → FCM Configuration
+- Service account key JSON: download from Firebase Console → Project Settings → Service Accounts
+- FCM is optional — Phobri works fine without it for LAN-only use
+
 ### Android (Kotlin)
 - Project: `android/app/`
 - Min SDK: 26, Target SDK: 35
@@ -117,8 +124,8 @@ Auth Challenge: `nonce` (64-char hex), `ts` (epoch millis), `hmac` (64-char hex)
 - [x] ~~Android CIO engine → OkHttp for hostname verification control~~
 - [x] Proper TOFU cert pinning for Ktor OkHttp (trust-all for dev → pinned TrustManager)
 - [x] Easy server setup in the client via QR code
+- [x] FCM integration for reliable wake (optional)
 - [ ] Server cert SAN should include Tailscale hostname at generation time
-- [ ] FCM integration for reliable wake (optional)
 - [ ] SMS sending from desktop
 - [ ] Conversation search
 - [ ] Export conversations
