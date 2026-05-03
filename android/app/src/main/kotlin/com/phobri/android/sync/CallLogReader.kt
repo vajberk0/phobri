@@ -2,6 +2,8 @@ package com.phobri.android.sync
 
 import android.content.ContentResolver
 import android.content.Context
+import android.os.Build
+import android.os.Bundle
 import android.provider.CallLog
 import com.phobri.android.model.CallLogEntry
 import com.phobri.android.model.CallType
@@ -35,24 +37,56 @@ class CallLogReader(private val context: Context) {
 
         val selection = if (after != null) "${CallLog.Calls.DATE} > ?" else null
         val selectionArgs = if (after != null) arrayOf(after.toString()) else null
-        val sortOrder = "${CallLog.Calls.DATE} DESC LIMIT $limit"
+        val sortOrder = "${CallLog.Calls.DATE} DESC"
 
         try {
-            contentResolver.query(
-                CallLog.Calls.CONTENT_URI,
-                PROJECTION,
-                selection,
-                selectionArgs,
-                sortOrder
-            )?.use { cursor ->
-                while (cursor.moveToNext()) {
+            android.util.Log.d("CallLogReader", "Querying call log: after=$after limit=$limit selection=$selection")
+
+            val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // Use Bundle-based query for proper LIMIT support (API 26+)
+                val queryArgs = Bundle().apply {
+                    if (selection != null) {
+                        putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    }
+                    if (selectionArgs != null) {
+                        putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                    }
+                    putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+                    putInt(ContentResolver.QUERY_ARG_SQL_LIMIT, limit)
+                }
+                contentResolver.query(
+                    CallLog.Calls.CONTENT_URI,
+                    PROJECTION,
+                    queryArgs,
+                    null
+                )
+            } else {
+                // Fallback: append LIMIT to sortOrder (legacy approach)
+                contentResolver.query(
+                    CallLog.Calls.CONTENT_URI,
+                    PROJECTION,
+                    selection,
+                    selectionArgs,
+                    "$sortOrder LIMIT $limit"
+                )
+            }
+
+            if (cursor == null) {
+                android.util.Log.w("CallLogReader", "contentResolver.query() returned null — possible permission denial")
+            }
+
+            cursor?.use { c ->
+                android.util.Log.d("CallLogReader", "Cursor returned ${c.count} rows")
+                while (c.moveToNext()) {
                     try {
-                        calls.add(cursorToCallLogEntry(cursor))
+                        calls.add(cursorToCallLogEntry(c))
                     } catch (e: Exception) {
                         android.util.Log.w("CallLogReader", "Failed to parse call log row", e)
                     }
                 }
             }
+
+            android.util.Log.d("CallLogReader", "Returning ${calls.size} call log entries")
         } catch (e: SecurityException) {
             android.util.Log.w("CallLogReader", "Permission denied reading call log: ${e.message}")
         } catch (e: Exception) {

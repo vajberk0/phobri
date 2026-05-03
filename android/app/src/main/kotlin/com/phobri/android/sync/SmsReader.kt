@@ -3,6 +3,8 @@ package com.phobri.android.sync
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.provider.Telephony
 import com.phobri.android.model.SmsMessage
 import com.phobri.android.model.SmsType
@@ -25,6 +27,28 @@ class SmsReader(private val context: Context) {
     }
 
     /**
+     * Query SMS content at a given URI leveraging Bundle args (API 26+)
+     * for proper SQL LIMIT support, falling back to the legacy sortOrder hack
+     * on older devices.
+     */
+    private fun querySmsUri(uri: Uri, selection: String?, selectionArgs: Array<String>?, sortOrder: String, limit: Int) =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val queryArgs = Bundle().apply {
+                if (selection != null) {
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                }
+                if (selectionArgs != null) {
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                }
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+                putInt(ContentResolver.QUERY_ARG_SQL_LIMIT, limit)
+            }
+            contentResolver.query(uri, PROJECTION, queryArgs, null)
+        } else {
+            contentResolver.query(uri, PROJECTION, selection, selectionArgs, "$sortOrder LIMIT $limit")
+        }
+
+    /**
      * Read SMS messages, optionally filtered by timestamp.
      * @param after Only return messages after this timestamp (millis).
      * @param limit Maximum number of messages to return.
@@ -35,10 +59,10 @@ class SmsReader(private val context: Context) {
 
         val selection = if (after != null) "date > ?" else null
         val selectionArgs = if (after != null) arrayOf(after.toString()) else null
-        val sortOrder = "date DESC LIMIT $limit"
+        val sortOrder = "date DESC"
 
         listOf(SMS_INBOX_URI, SMS_SENT_URI, SMS_DRAFT_URI).forEach { uri ->
-            contentResolver.query(uri, PROJECTION, selection, selectionArgs, sortOrder)
+            querySmsUri(uri, selection, selectionArgs, sortOrder, limit)
                 ?.use { cursor ->
                     while (cursor.moveToNext()) {
                         messages.add(cursorToSmsMessage(cursor))
@@ -64,10 +88,10 @@ class SmsReader(private val context: Context) {
         val messages = mutableListOf<SmsMessage>()
         val selection = "address = ?"
         val selectionArgs = arrayOf(address)
-        val sortOrder = "date DESC LIMIT $limit"
+        val sortOrder = "date DESC"
 
         listOf(SMS_INBOX_URI, SMS_SENT_URI, SMS_DRAFT_URI).forEach { uri ->
-            contentResolver.query(uri, PROJECTION, selection, selectionArgs, sortOrder)
+            querySmsUri(uri, selection, selectionArgs, sortOrder, limit)
                 ?.use { cursor ->
                     while (cursor.moveToNext()) {
                         messages.add(cursorToSmsMessage(cursor))
