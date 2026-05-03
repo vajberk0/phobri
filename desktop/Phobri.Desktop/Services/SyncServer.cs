@@ -25,6 +25,12 @@ public sealed class SyncServer : IDisposable
     public int Port { get; }
     public bool IsRunning { get; private set; }
 
+    /// <summary>
+    /// Fired when a request is rejected because the server is locked (HTTP 423).
+    /// The UI can listen for this to auto-prompt for the unlock password.
+    /// </summary>
+    public event EventHandler? LockedRequestReceived;
+
     public SyncServer(
         int port,
         IWebSocketHandler wsHandler,
@@ -99,6 +105,7 @@ public sealed class SyncServer : IDisposable
             {
                 _log.Log("REST", "WS rejected — server locked (423)");
                 context.Response.StatusCode = 423; // Locked
+                LockedRequestReceived?.Invoke(this, EventArgs.Empty);
                 await context.Response.WriteAsync("Server is locked. Unlock with password first.");
                 return;
             }
@@ -195,7 +202,10 @@ public sealed class SyncServer : IDisposable
     private IResult? RequireToken(HttpContext context)
     {
         if (!_passwordManager.IsUnlocked)
+        {
+            LockedRequestReceived?.Invoke(this, EventArgs.Empty);
             return Results.Json(new { error = "Server is locked" }, statusCode: 423);
+        }
 
         if (!_pairingService.IsPaired)
             return Results.Json(new { error = "No device paired" }, statusCode: 401);

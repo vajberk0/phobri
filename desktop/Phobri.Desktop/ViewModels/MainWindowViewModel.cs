@@ -54,9 +54,17 @@ public partial class MainWindowViewModel : ViewModelBase
         _wsHandler.CallReceived += OnCallReceived;
         _wsHandler.ConnectionStateChanged += OnConnectionStateChanged;
 
+        // Auto-prompt for password when phone request hits locked server
+        _syncServer.LockedRequestReceived += OnLockedRequestReceived;
+
         // Initial vault state
         RefreshVaultState();
     }
+
+    /// <summary>
+    /// Guard against multiple concurrent unlock dialogs.
+    /// </summary>
+    private bool _isPasswordDialogShowing;
 
     public SmsViewModel SmsViewModel { get; }
     public CallLogViewModel CallLogViewModel { get; }
@@ -211,22 +219,51 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task UnlockVaultAsync()
     {
-        var unlockDialog = new Views.PasswordDialog(_passwordManager, isSetupMode: false);
-        // Find the main window to use as owner
-        var mainWindow = Avalonia.Application.Current?.ApplicationLifetime
-            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
-            ? desktop.MainWindow
-            : null;
+        if (_isPasswordDialogShowing)
+            return;
 
-        if (mainWindow is null) return;
-
-        await unlockDialog.ShowDialog(mainWindow);
-        if (unlockDialog.Success)
+        _isPasswordDialogShowing = true;
+        try
         {
-            App.UnlockDatabase(_dataService, _passwordManager);
-            RefreshVaultState();
-            StatusText = "Vault unlocked";
+            var unlockDialog = new Views.PasswordDialog(_passwordManager, isSetupMode: false);
+            // Find the main window to use as owner
+            var mainWindow = Avalonia.Application.Current?.ApplicationLifetime
+                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                ? desktop.MainWindow
+                : null;
+
+            if (mainWindow is null) return;
+
+            await unlockDialog.ShowDialog(mainWindow);
+            if (unlockDialog.Success)
+            {
+                App.UnlockDatabase(_dataService, _passwordManager);
+                RefreshVaultState();
+                StatusText = "Vault unlocked";
+            }
         }
+        finally
+        {
+            _isPasswordDialogShowing = false;
+        }
+    }
+
+    /// <summary>
+    /// Handler for when the server rejects a phone request because the vault is locked.
+    /// Automatically shows the unlock dialog so the next retry succeeds.
+    /// </summary>
+    private void OnLockedRequestReceived(object? sender, EventArgs e)
+    {
+        // Already unlocked or dialog already showing — nothing to do
+        if (_passwordManager.IsUnlocked || _isPasswordDialogShowing)
+            return;
+
+        // Dispatch to UI thread (the event fires from a Kestrel worker thread)
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (!_passwordManager.IsUnlocked && !_isPasswordDialogShowing)
+                UnlockVaultCommand.Execute(null);
+        });
     }
 
     /// <summary>

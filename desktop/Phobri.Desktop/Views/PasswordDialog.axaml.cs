@@ -29,6 +29,9 @@ public partial class PasswordDialog : Window
         _isSetupMode = isSetupMode;
 
         ConfigureMode();
+
+        // Auto-focus the first text field so user can start typing immediately
+        Opened += (_, _) => PasswordBox.Focus();
     }
 
     /// <summary>
