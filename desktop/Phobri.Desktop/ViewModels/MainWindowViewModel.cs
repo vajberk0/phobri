@@ -93,6 +93,22 @@ public partial class MainWindowViewModel : ViewModelBase
     private int _selectedTabIndex;
 
     /// <summary>
+    /// Phone IP address for UDP wake. Configurable in Settings.
+    /// </summary>
+    [ObservableProperty]
+    private string _phoneIp = "";
+
+    // --- Computed properties for toolbar button visibility ---
+
+    public bool ShowLockButton => IsVaultConfigured && IsVaultUnlocked;
+    public bool ShowUnlockButton => IsVaultConfigured && !IsVaultUnlocked;
+    public bool ShowStartButton => !IsServerRunning;
+    public bool ShowStopButton => IsServerRunning;
+
+    public string ConnectionStatusText => IsConnected ? "🟢 Connected" : "⚫ Disconnected";
+    public string ServerStatusText => IsServerRunning ? "● Running" : "● Stopped";
+
+    /// <summary>
     /// Start the sync server.
     /// </summary>
     [RelayCommand]
@@ -130,7 +146,7 @@ public partial class MainWindowViewModel : ViewModelBase
     /// Tries UDP first (LAN only), then FCM push (works anywhere).
     /// </summary>
     [RelayCommand]
-    private async Task WakePhoneAsync(string phoneIp)
+    private async Task WakePhoneAsync(string? phoneIp)
     {
         var results = new List<string>();
 
@@ -176,7 +192,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private async Task NavigateToMessagesAsync()
     {
         SelectedTabIndex = 0;
-        await SmsViewModel.LoadConversationsCommand.ExecuteAsync(null);
+        await SmsViewModel.LoadMessagesCommand.ExecuteAsync(null);
     }
 
     /// <summary>
@@ -267,12 +283,49 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Navigate to the Settings tab.
+    /// </summary>
+    [RelayCommand]
+    private void NavigateToSettings()
+    {
+        SelectedTabIndex = 3;
+    }
+
+    /// <summary>
     /// Refresh the vault state properties from the password manager.
     /// </summary>
     public void RefreshVaultState()
     {
         IsVaultConfigured = _passwordManager.IsConfigured;
         IsVaultUnlocked = _passwordManager.IsUnlocked;
+        OnPropertyChanged(nameof(ShowLockButton));
+        OnPropertyChanged(nameof(ShowUnlockButton));
+    }
+
+    // --- Partial OnChanged handlers to cascade computed property notifications ---
+
+    partial void OnIsServerRunningChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowStartButton));
+        OnPropertyChanged(nameof(ShowStopButton));
+        OnPropertyChanged(nameof(ServerStatusText));
+    }
+
+    partial void OnIsConnectedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ConnectionStatusText));
+    }
+
+    partial void OnIsVaultConfiguredChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowLockButton));
+        OnPropertyChanged(nameof(ShowUnlockButton));
+    }
+
+    partial void OnIsVaultUnlockedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowLockButton));
+        OnPropertyChanged(nameof(ShowUnlockButton));
     }
 
     // --- Event Handlers ---
