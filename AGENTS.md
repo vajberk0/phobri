@@ -165,9 +165,14 @@ Components installed:
 
 Gradle wrapper (8.11.1) is committed; no system Gradle needed.
 
-## Git Workflow
+## Post-Change Checklist
 
-**After finishing a set of changes, always commit and push:**
+**After every set of changes, run all of these before considering the work done:**
+
+1. **Build APK** — `cd android && ./gradlew assembleDebug`
+2. **Restart server / run all tests** — `./phobri_test.sh` (desktop unit + integration + android unit)
+3. **Update markdown files** — AGENTS.md, README.md, PLAN.md, and/or `shared/protocol.md` if protocol changed
+4. **Commit and push:**
 ```bash
 git add -A
 git commit -m "<descriptive message>"
