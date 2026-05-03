@@ -133,8 +133,10 @@ sync service has stopped.
 1. Create a Firebase project at https://console.firebase.google.com/
 2. Add an Android app with package name `com.phobri.android`
 3. Download `google-services.json` and place it in `android/app/` (copy `android/app/google-services.json.example` → `google-services.json` as a starting point)
-4. In Firebase Console → Project Settings → Service Accounts, generate a new private key (JSON)
-5. On the desktop, go to Settings → FCM Configuration and enter the path to the JSON key file
+4. **Separately:** In Firebase Console → ⚙ Project Settings → **Service Accounts** → **Generate new private key**
+   → downloads a JSON file (e.g., `phobri-xxxxx-firebase-adminsdk-xxxxx.json`)
+   → ⚠️ This is NOT the same as `google-services.json` — it's a different file with different content.
+5. On the desktop, go to **Settings → FCM Configuration** and enter the path to the **service account key** JSON file (not google-services.json)
 6. Click "Configure FCM" — status should show "✓ FCM ready"
 
 Once configured, clicking "Wake Phone" on desktop will try both UDP (LAN) and

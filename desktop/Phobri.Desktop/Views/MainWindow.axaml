@@ -369,7 +369,7 @@
                                         Content="Configure FCM"
                                         HorizontalAlignment="Left" />
 
-                                <TextBlock Text="Download the JSON key from Firebase Console → Project Settings → Service Accounts → Generate New Private Key."
+                                <TextBlock Text="⚠ This is NOT the same file as google-services.json. Get it from: Firebase Console → ⚙ Project Settings → Service Accounts → Generate New Private Key."
                                            FontSize="10" Opacity="0.5" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>

@@ -84,6 +84,17 @@ public sealed class FcmPushService : IFcmPushService, IDisposable
 
         try
         {
+            // Quick check: detect if user accidentally provided google-services.json
+            // instead of a service account key. They are different files.
+            var fileText = File.ReadAllText(serviceAccountPath);
+            if (fileText.Contains("\"project_info\"") && !fileText.Contains("\"private_key\""))
+            {
+                _lastError = "This looks like google-services.json (Android config), not a service account key. " +
+                    "Go to Firebase Console → Project Settings → Service accounts → Generate new private key.";
+                _log.Log("FCM", _lastError);
+                return false;
+            }
+
             // Clean up any orphaned default FirebaseApp from previous attempts
             try
             {
