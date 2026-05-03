@@ -83,7 +83,8 @@ class FcmReceiver : FirebaseMessagingService() {
 
     /**
      * Handle a wake message from the desktop.
-     * Updates the stored host if it changed, then starts the sync service.
+     * Updates the stored host if it changed, remembers that FCM is working,
+     * then starts the sync service.
      */
     private fun handleWake(serverHost: String?, serverPort: Int) {
         if (serverHost.isNullOrBlank()) {
@@ -97,7 +98,7 @@ class FcmReceiver : FirebaseMessagingService() {
 
         // Only act if we're paired
         if (!pairingManager.isPaired) {
-            Log.w(TAG, "Ignoring wake — not paired")
+            Log.w(TAG, "Ignoring wake — not partnered")
             return
         }
 
@@ -106,6 +107,13 @@ class FcmReceiver : FirebaseMessagingService() {
         if (oldHost != serverHost) {
             Log.d(TAG, "Desktop host changed: $oldHost → $serverHost")
             pairingManager.updateHost(serverHost)
+        }
+
+        // Mark that FCM is proven to work — from now on the sync service
+        // will not auto-retry on disconnect (saving battery).
+        if (!pairingManager.fcmWakeReceived) {
+            pairingManager.fcmWakeReceived = true
+            Log.d(TAG, "FCM wake confirmed — switching to push-driven sync mode")
         }
 
         // Start the sync service (or restart if already running)

@@ -170,10 +170,20 @@ class SyncForegroundService : Service() {
         setupObservers()
 
         mainLoopJob = serviceScope.launch {
+            var wasEverConnected = false
+
             while (isActive && isRunning) {
                 try {
                     // Only connect if not already connected
                     if (!client.connectionState.value) {
+                        // If FCM is proven to work and we've already had a
+                        // successful session, stop retrying — the next wake
+                        // will come via FCM push or explicit button click.
+                        if (wasEverConnected && pairingManager.fcmWakeReceived) {
+                            Log.d(TAG, "FCM wake proven — stopping persistent sync to save battery")
+                            break
+                        }
+
                         updateNotification("Connecting...")
                         val url = "wss://$host:$port/sync"
                         Log.d(TAG, "Connecting to $url")
@@ -196,6 +206,8 @@ class SyncForegroundService : Service() {
 
                             // Send FCM token so desktop can push-wake us
                             sendCurrentFcmToken(client)
+
+                            wasEverConnected = true
                         } else {
                             Log.w(TAG, "connect() returned but connectionState is false")
                         }
@@ -203,11 +215,26 @@ class SyncForegroundService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Connection error", e)
                     updateNotification("Disconnected - retrying...")
+
+                    // Don't retry if FCM works and we've been connected before
+                    if (wasEverConnected && pairingManager.fcmWakeReceived) {
+                        Log.d(TAG, "FCM wake proven — stopping after error")
+                        break
+                    }
                 }
 
                 delay(3_000)
             }
-            Log.d(TAG, "Main loop exited (isRunning=$isRunning)")
+
+            // If the loop exited because of FCM mode (not because stopSync() was
+            // called), cleanly shut down the service.
+            if (isRunning) {
+                Log.d(TAG, "Main loop exited — stopping service")
+                stopSync()
+                stopSelf()
+            } else {
+                Log.d(TAG, "Main loop exited (isRunning=$isRunning)")
+            }
         }
     }
 

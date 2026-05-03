@@ -32,6 +32,7 @@ class PairingManager(context: Context) {
         private const val KEY_SYNC_SMS_ENABLED = "sync_sms_enabled"
         private const val KEY_SYNC_CALLS_ENABLED = "sync_calls_enabled"
         private const val KEY_MAX_SYNC_ENTRIES = "max_sync_entries"
+        private const val KEY_FCM_WAKE_RECEIVED = "fcm_wake_received"
 
         private fun createEncryptedPrefs(context: Context): SharedPreferences {
             return try {
@@ -90,7 +91,17 @@ class PairingManager(context: Context) {
         set(value) { prefs.edit().putInt(KEY_MAX_SYNC_ENTRIES, value).apply() }
 
     /**
-     * Store pairing information.
+     * Whether an FCM push has been received since the last pairing.
+     * When true, the sync service stops auto-retrying on disconnect — the
+     * next wake comes via FCM push or an explicit "Start Sync" button press.
+     * Automatically reset to false on unpair / re-pair.
+     */
+    var fcmWakeReceived: Boolean
+        get() = prefs.getBoolean(KEY_FCM_WAKE_RECEIVED, false)
+        set(value) { prefs.edit().putBoolean(KEY_FCM_WAKE_RECEIVED, value).apply() }
+
+    /**
+     * Store pairing information. Resets the FCM-wake-received flag on fresh pair.
      */
     fun savePairing(token: String, fingerprint: String, host: String, port: Int = 8765, sik: String? = null) {
         try {
@@ -99,6 +110,7 @@ class PairingManager(context: Context) {
                 .putString(KEY_CERT_FINGERPRINT, fingerprint)
                 .putString(KEY_DESKTOP_HOST, host)
                 .putInt(KEY_DESKTOP_PORT, port)
+                .putBoolean(KEY_FCM_WAKE_RECEIVED, false)
             if (sik != null) {
                 editor.putString(KEY_SERVER_IDENTITY_KEY, sik)
             }

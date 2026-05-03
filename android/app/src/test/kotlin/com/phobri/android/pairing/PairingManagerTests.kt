@@ -105,4 +105,39 @@ class PairingManagerTests {
 
         assertEquals("10.0.0.5", pairingManager.desktopHost)
     }
+
+    @Test
+    fun `fcmWakeReceived defaults to false`() {
+        pairingManager.savePairing("token", "fingerprint", "host")
+        assertFalse(pairingManager.fcmWakeReceived)
+    }
+
+    @Test
+    fun `fcmWakeReceived can be set and read back`() {
+        pairingManager.savePairing("token", "fingerprint", "host")
+        pairingManager.fcmWakeReceived = true
+        assertTrue(pairingManager.fcmWakeReceived)
+    }
+
+    @Test
+    fun `clear pairing resets fcmWakeReceived`() {
+        pairingManager.savePairing("token", "fingerprint", "host")
+        pairingManager.fcmWakeReceived = true
+        assertTrue(pairingManager.fcmWakeReceived)
+
+        pairingManager.clearPairing()
+        // After clearing, re-create to ensure fresh read from prefs
+        val newManager = PairingManager(context)
+        assertFalse(newManager.fcmWakeReceived)
+    }
+
+    @Test
+    fun `save pairing resets fcmWakeReceived`() {
+        pairingManager.savePairing("token", "fingerprint", "host")
+        pairingManager.fcmWakeReceived = true
+
+        // Re-pairing (fresh save) should reset the flag
+        pairingManager.savePairing("newtoken", "newfingerprint", "newhost")
+        assertFalse(pairingManager.fcmWakeReceived)
+    }
 }
